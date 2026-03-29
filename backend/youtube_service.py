@@ -141,6 +141,9 @@ def get_channel_analytics(channel_id: str, days: int = 30):
                 "conv_ratio": round(( (row[4] - row[5]) / row[1] ) * 100, 2) if row[1] > 0 else 0
             })
 
+        # Sort by publish date (latest first)
+        video_list.sort(key=lambda v: v.get("publishedAt") or "", reverse=True)
+
     return {
         "period": {"start": start_date, "end": end_date},
         "summary": {
