@@ -1,12 +1,135 @@
 @import "tailwindcss";
 
+/* 
+  YT-Central_Mind: Professional Design System 
+  Focus: Modern, Premium, Data-Rich Dashboard
+*/
+
 :root {
-  --background: #0d0f12;
-  --foreground: #e2e8f0;
+  /* Core Palette (Light) */
+  --bg-page: #f8fafc;
+  --bg-nav: #ffffffb3; /* Translucent for glassmorphism */
+  --bg-card: #ffffff;
+  --bg-table-header: #f8fafc;
+  --bg-table-row-hover: #f1f5f9;
+  --bg-table-row-alt: #fafbfd;
+  --bg-input: #f1f5f9;
+  --bg-badge: #fee2e2;
+  
+  /* Borders & Shadows */
+  --border-card: rgba(226, 232, 240, 0.8);
+  --border-light: #f1f5f9;
+  --border-table: #f1f5f9;
+  --nav-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --card-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
+  
+  /* Text */
+  --text-primary: #0f172a;
+  --text-heading: #1e293b;
+  --text-body: #334155;
+  --text-secondary: #475569;
+  --text-table-header: #64748b;
+  --text-label: #94a3b8;
+  --text-placeholder: #cbd5e1;
+  
+  /* Accent: Professional Crimson */
+  --accent: #e11d48;
+  --accent-soft: #fff1f2;
+  --accent-border: #fecdd3;
+  --accent-gradient: linear-gradient(135deg, #e11d48 0%, #be123c 100%);
+  
+  /* Navigation */
+  --tab-inactive: #64748b;
+  --tab-hover-bg: #f8fafc;
+  --breadcrumb-text: #64748b;
+  --breadcrumb-active-bg: #fff1f2;
+  --breadcrumb-active-border: #fecdd3;
+  --breadcrumb-active-text: #e11d48;
+  
+  /* Components */
+  --toggle-bg: #e2e8f0;
+  --toggle-knob: #ffffff;
+  --row-number: #cbd5e1;
+  --card-radius: 12px;
+}
+
+[data-theme="dark"] {
+  /* Core Palette (Dark - Luxury Night) */
+  --bg-page: #0a0c10;
+  --bg-nav: rgba(13, 17, 23, 0.8); /* Glassmorphism ready */
+  --bg-card: #151921;
+  --bg-table-header: #0d1117;
+  --bg-table-row-hover: #1c2128;
+  --bg-table-row-alt: #161b22;
+  --bg-input: #0d1117;
+  --bg-badge: #3b0a0d;
+  
+  /* Borders & Shadows */
+  --border-card: #30363d;
+  --border-light: #21262d;
+  --border-table: #30363d55;
+  --nav-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  --card-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.24);
+  
+  /* Text */
+  --text-primary: #f0f6fc;
+  --text-heading: #ffffff;
+  --text-body: #c9d1d9;
+  --text-secondary: #8b949e;
+  --text-table-header: #8b949e;
+  --text-label: #8b949e;
+  --text-placeholder: #484f58;
+  
+  /* Accent: Vibrant Rose */
+  --accent: #f43f5e;
+  --accent-soft: rgba(244, 63, 94, 0.15);
+  --accent-border: rgba(244, 63, 94, 0.3);
+  --accent-gradient: linear-gradient(135deg, #f43f5e 0%, #e11d48 100%);
+  
+  /* Navigation */
+  --tab-inactive: #8b949e;
+  --tab-hover-bg: #161b22;
+  --breadcrumb-text: #8b949e;
+  --breadcrumb-active-bg: rgba(244, 63, 94, 0.15);
+  --breadcrumb-active-border: rgba(244, 63, 94, 0.3);
+  --breadcrumb-active-text: #f43f5e;
+  
+  /* Components */
+  --toggle-bg: #30363d;
+  --toggle-knob: #c9d1d9;
+  --row-number: #484f58;
 }
 
 body {
-  background-color: var(--background);
-  color: var(--foreground);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background-color: var(--bg-page);
+  color: var(--text-body);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Glassmorphism Effect */
+.glass-effect {
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-card); border-radius: 10px; border: 2px solid var(--bg-page); }
+::-webkit-scrollbar-thumb:hover { background: var(--text-placeholder); }
+
+/* Back Button Animation */
+.back-btn-premium {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.back-btn-premium:hover {
+  background-color: var(--accent-soft) !important;
+  color: var(--accent) !important;
+  border-color: var(--accent-border) !important;
+  transform: translateX(-3px);
+  box-shadow: 0 4px 12px var(--accent-soft);
 }

@@ -20,6 +20,33 @@ REDIRECT_URI = "http://localhost:8001/auth/callback"
 TOKEN_FILE = "tokens.json"
 
 
+def get_credentials_from_env():
+    """Try to load credentials from environment variables (for Render/production)."""
+    token_json = os.environ.get("GOOGLE_TOKENS_JSON")
+    if not token_json:
+        return None
+    try:
+        data = json.loads(token_json)
+        expiry = data.get("expiry")
+        if expiry:
+            expiry = datetime.fromisoformat(expiry)
+        creds = Credentials(
+            token=data["access_token"],
+            refresh_token=data["refresh_token"],
+            token_uri=data["token_uri"],
+            client_id=data["client_id"],
+            client_secret=data["client_secret"],
+            scopes=data["scopes"],
+            expiry=expiry
+        )
+        if creds.expired or not creds.token:
+            creds.refresh(Request())
+        return creds
+    except Exception as e:
+        print(f"Failed to load credentials from env: {e}")
+        return None
+
+
 def save_tokens(credentials):
     """Helper to save credentials to tokens.json."""
     token_data = {
@@ -38,6 +65,11 @@ def save_tokens(credentials):
 
 def get_credentials():
     """Retrieves credentials, refreshing them automatically if needed."""
+    # Try environment variable first (for Render/production)
+    env_creds = get_credentials_from_env()
+    if env_creds:
+        return env_creds
+
     if not os.path.exists(TOKEN_FILE):
         return None
 
