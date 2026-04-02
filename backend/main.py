@@ -1,6 +1,9 @@
 import os
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 import uvicorn
 
 # Import the router from our data service module
@@ -24,12 +27,31 @@ app.add_middleware(
 app.include_router(youtube_router)
 
 
-@app.get("/")
-def root():
-    return {
-        "message": "Welcome to YouTube Central Mind API",
-        "docs": "Visit /docs for Interactive API Documentation"
-    }
+@app.get("/api/health")
+def health():
+    return {"status": "ok", "message": "YouTube Central Mind API is running"}
+
+
+# Serve React frontend (built static files) in production
+STATIC_DIR = Path(__file__).parent.parent / "frontend" / "dist"
+if STATIC_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+
+    @app.get("/{full_path:path}")
+    def serve_frontend(full_path: str):
+        """Serve React app for all non-API routes."""
+        file_path = STATIC_DIR / full_path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(STATIC_DIR / "index.html")
+else:
+    @app.get("/")
+    def root():
+        return {
+            "message": "Welcome to YouTube Central Mind API",
+            "docs": "Visit /docs for Interactive API Documentation",
+            "note": "Frontend not built yet. Run 'npm run build' in frontend/"
+        }
 
 
 if __name__ == "__main__":
