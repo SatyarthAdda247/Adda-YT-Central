@@ -1,9 +1,22 @@
-import os
-import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from googleapiclient.discovery import build
+from google.oauth2 import service_account
+from google.cloud import bigquery
+
+BQ_PROJECT    = "adda247-dev"
+BQ_DATASET    = "yt_central_mind"
+TABLE_CHANNEL = f"{BQ_PROJECT}.{BQ_DATASET}.channel_daily_snapshot"
+TABLE_VIDEO   = f"{BQ_PROJECT}.{BQ_DATASET}.video_analytics_daily"
+SA_PATH       = Path(__file__).parent / "servcie_account_adda247-dev.json"
+
+def get_bq_client():
+    creds = service_account.Credentials.from_service_account_file(
+        str(SA_PATH), scopes=["https://www.googleapis.com/auth/bigquery"]
+    )
+    return bigquery.Client(project=BQ_PROJECT, credentials=creds)
 
 # ============================================================
 # In-Memory Cache — TTL-based, no external dependency
@@ -21,23 +34,10 @@ def get_cached(key, ttl_seconds, fetch_fn):
     _cache[key] = {"data": data, "time": now}
     return data
 
-CACHE_TTL_CHANNEL = 900    # 15 minutes for real-time channel data
-CACHE_TTL_ANALYTICS = 3600 # 1 hour for D-2 analytics data
+CACHE_TTL_CHANNEL   = 3600  # 1 hour — matches hourly cron on channel_daily_snapshot
+CACHE_TTL_BQ_VIDEOS = 7200  # 2 hours — nightly pipeline, no need to refresh more often
 
 
-def parse_iso8601_duration(duration_str):
-    """Convert ISO 8601 duration (PT1H2M3S) to total seconds."""
-    if not duration_str:
-        return 0
-    match = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', duration_str)
-    if not match:
-        return 0
-    hours = int(match.group(1) or 0)
-    minutes = int(match.group(2) or 0)
-    seconds = int(match.group(3) or 0)
-    return hours * 3600 + minutes * 60 + seconds
-
-# Import the credential manager from our auth service
 from auth_service import get_credentials
 
 youtube_router = APIRouter(prefix="/yt", tags=["YouTube API"])
@@ -50,192 +50,229 @@ def get_channel_profile(channel_id: str):
         raise HTTPException(status_code=401, detail="Not authorized.")
 
     def fetch():
+        # ── Identity: still from YouTube Data API (name, thumbnail, bio — metadata only) ──
         youtube = build("youtube", "v3", credentials=creds)
-        request = youtube.channels().list(
-            part="snippet,statistics,contentDetails,status",
+        response = youtube.channels().list(
+            part="snippet",
             id=channel_id,
-        )
-        response = request.execute()
+        ).execute()
 
         if not response.get("items"):
             raise HTTPException(status_code=404, detail=f"Channel {channel_id} not found")
 
-        channel = response["items"][0]
-        snip = channel["snippet"]
-        stats = channel["statistics"]
+        snip = response["items"][0]["snippet"]
 
-        subs = int(stats.get("subscriberCount", 0))
-        if subs >= 100:
-            import math
-            precision = 3
-            factor = 10 ** (int(math.log10(subs)) - (precision - 1))
-            subs_rounded = math.floor(subs / factor) * factor
-        else:
-            subs_rounded = subs
+        # ── Stats: from BQ channel_daily_snapshot (latest row for this channel) ──
+        bq_stats = {"subscribers_actual": 0, "subscribers_rounded": 0, "total_views": 0, "total_videos": 0}
+        try:
+            bq = get_bq_client()
+            query = f"""
+                SELECT subscribers, total_views, total_videos
+                FROM `{TABLE_CHANNEL}`
+                WHERE channel_id = @channel_id
+                ORDER BY fetched_at DESC
+                LIMIT 1
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[bigquery.ScalarQueryParameter("channel_id", "STRING", channel_id)]
+            )
+            rows = list(bq.query(query, job_config=job_config).result())
+            if rows:
+                import math
+                subs = rows[0].subscribers or 0
+                subs_rounded = subs
+                if subs >= 100:
+                    precision = 3
+                    factor = 10 ** (int(math.log10(subs)) - (precision - 1))
+                    subs_rounded = math.floor(subs / factor) * factor
+                bq_stats = {
+                    "subscribers_actual": subs,
+                    "subscribers_rounded": subs_rounded,
+                    "total_views": rows[0].total_views or 0,
+                    "total_videos": rows[0].total_videos or 0,
+                }
+        except Exception:
+            pass  # BQ unavailable — stats will show as 0
 
         return {
             "identity": {
                 "name": snip.get("title"),
                 "id": channel_id,
-                "custom_url": snip.get("customUrl"),
-                "thumbnail_url": snip.get("thumbnails", {}).get("high", {}).get("url"),
+                "custom_url": snip.get("customUrl", ""),
+                "thumbnail_url": snip.get("thumbnails", {}).get("high", {}).get("url", ""),
                 "created_at": snip.get("publishedAt"),
                 "country": snip.get("country"),
                 "description": snip.get("description"),
             },
-            "stats": {
-                "total_videos": stats.get("videoCount"),
-                "subscribers_actual": subs,
-                "subscribers_rounded": subs_rounded,
-                "total_views": stats.get("viewCount"),
-                "hidden_subscriber_count": stats.get("hiddenSubscriberCount"),
-            },
-            "message": "✅ API 1: Public Master Data Fetched"
+            "stats": bq_stats,
+            "source": "identity=youtube_api · stats=bigquery",
         }
 
     return get_cached(f"channel:{channel_id}", CACHE_TTL_CHANNEL, fetch)
 
 
-@youtube_router.get("/analytics/{channel_id}")
-def get_channel_analytics(channel_id: str, days: int = 30):
-    creds = get_credentials()
-    if not creds:
-        raise HTTPException(status_code=401, detail="Not authorized.")
 
-    def fetch():
-        analytics = build("youtubeAnalytics", "v2", credentials=creds)
-        youtube_data = build("youtube", "v3", credentials=creds)
-
-        end_date = (datetime.utcnow() - timedelta(days=2)).strftime("%Y-%m-%d")
-        start_date = (datetime.utcnow() - timedelta(days=days + 2)).strftime("%Y-%m-%d")
-
-        def query_yt(metrics, dimensions=None, filters=None, sort=None, max_results=None):
-            try:
-                return analytics.reports().query(
-                    ids=f"channel=={channel_id}",
-                    startDate=start_date,
-                    endDate=end_date,
-                    metrics=metrics,
-                    dimensions=dimensions,
-                    filters=filters,
-                    sort=sort,
-                    maxResults=max_results
-                ).execute()
-            except Exception as e:
-                print(f"ℹ️ Skipping Unavailable Multi-Metric: {str(e).split('returned')[0]}")
-                return {"rows": [], "columnHeaders": []}
-
-        # 1. CHANNEL PERFORMANCE (DAILY)
-        core = query_yt(
-            metrics="views,engagedViews,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained,subscribersLost,likes,dislikes,comments,shares",
-            dimensions="day",
-            sort="day"
-        )
-
-        # 2. AUDIENCE INTELLIGENCE (DEMO/DEVICE/TRAFFIC)
-        traffic = query_yt(metrics="views,estimatedMinutesWatched", dimensions="insightTrafficSourceType", sort="-views")
-        demographics = query_yt(metrics="viewerPercentage", dimensions="ageGroup,gender", sort="gender,ageGroup")
-        devices = query_yt(metrics="views,estimatedMinutesWatched", dimensions="deviceType", sort="-views")
-        subs_status = query_yt(metrics="views,estimatedMinutesWatched", dimensions="subscribedStatus")
-
-        # 3. VIDEO-LEVEL DATA — Latest 20 uploads (like YouTube's UI)
-
-        # Step 1: Get the channel's upload playlist ID
-        ch_res = youtube_data.channels().list(
-            part="contentDetails",
-            id=channel_id
-        ).execute()
-        upload_playlist_id = ch_res["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
-
-        # Step 2: Fetch latest videos from upload playlist, filter out those within D-2 lag
-        playlist_res = youtube_data.playlistItems().list(
-            part="snippet",
-            playlistId=upload_playlist_id,
-            maxResults=40  # Fetch extra to account for D-2 filtering
-        ).execute()
-
-        # Only keep videos published on or before the analytics end date (D-2)
-        end_date_dt = datetime.utcnow() - timedelta(days=2)
-        video_ids = []
-        for item in playlist_res.get("items", []):
-            published = item["snippet"].get("publishedAt", "")
-            if published and datetime.fromisoformat(published.replace("Z", "+00:00")).replace(tzinfo=None) <= end_date_dt:
-                video_ids.append(item["snippet"]["resourceId"]["videoId"])
-            if len(video_ids) >= 20:
-                break
-
-        # Step 3: Get full metadata + type classification
-        video_list = []
-        if video_ids:
-            v_res = youtube_data.videos().list(
-                part="snippet,contentDetails,liveStreamingDetails",
-                id=",".join(video_ids)
-            ).execute()
-
-            v_meta = {}
-            v_types = {}
-            for v in v_res.get("items", []):
-                vid = v["id"]
-                v_meta[vid] = v["snippet"]
-                duration_secs = parse_iso8601_duration(v["contentDetails"].get("duration", ""))
-
-                if v.get("liveStreamingDetails"):
-                    v_types[vid] = "Live"
-                elif duration_secs <= 60:
-                    v_types[vid] = "Shorts"
-                else:
-                    v_types[vid] = "Video"
-
-            # Step 4: Fetch analytics for each video
-            analytics_map = {}
-            for vid_id in video_ids:
-                vid_report = query_yt(
-                    metrics="views,estimatedMinutesWatched,averageViewDuration,subscribersGained,subscribersLost,likes,comments",
-                    dimensions="video",
-                    filters=f"video=={vid_id}"
-                )
-                if vid_report.get("rows"):
-                    analytics_map[vid_id] = vid_report["rows"][0]
-
-            # Step 5: Build video list (maintaining upload order — latest first)
-            for vid_id in video_ids:
-                meta = v_meta.get(vid_id, {})
-                row = analytics_map.get(vid_id)
-                views = row[1] if row else 0
-                subs_gained = row[4] if row else 0
-                subs_lost = row[5] if row else 0
-
-                video_list.append({
-                    "id": vid_id,
-                    "title": meta.get("title", "Unknown Title"),
-                    "thumbnail": meta.get("thumbnails", {}).get("medium", {}).get("url") or meta.get("thumbnails", {}).get("default", {}).get("url"),
-                    "publishedAt": meta.get("publishedAt"),
-                    "videoType": v_types.get(vid_id, "Video"),
-                    "views": views,
-                    "watchTimeMins": row[2] if row else 0,
-                    "avd": row[3] if row else 0,
-                    "subsGained": subs_gained,
-                    "subsLost": subs_lost,
-                    "netSubs": subs_gained - subs_lost,
-                    "likes": row[6] if row else 0,
-                    "comments": row[7] if row else 0,
-                    "conv_ratio": round(((subs_gained - subs_lost) / views) * 100, 2) if views > 0 else 0
-                })
-
+@youtube_router.get("/channel-stats")
+def get_channel_stats():
+    """
+    Returns latest snapshot for every channel from BQ channel_daily_snapshot.
+    Frontend uses this to populate the Channel Explorer tab and Business Dashboard.
+    """
+    try:
+        bq = get_bq_client()
+        # Get the most recent row per channel_id
+        query = f"""
+            SELECT channel_id, channel_name, subscribers, total_views, total_videos, fetched_at
+            FROM (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY channel_id ORDER BY fetched_at DESC) AS rn
+                FROM `{TABLE_CHANNEL}`
+            )
+            WHERE rn = 1
+            ORDER BY subscribers DESC
+        """
+        rows = list(bq.query(query).result())
         return {
-            "period": {"start": start_date, "end": end_date},
-            "summary": {
-                "daily_performance": core.get("rows", []),
-                "traffic_sources": traffic.get("rows", []),
-                "demographics": demographics.get("rows", []),
-                "device_breakdown": devices.get("rows", []),
-                "subscription_split": subs_status.get("rows", []),
-                "video_master_table": video_list
-            },
-            "columns": {
-                "core": [c.get("name") for c in core.get("columnHeaders", [])]
-            },
-            "message": "✅ API 2: Full Intel Pipeline Active"
+            "channels": [
+                {
+                    "channel_id":   row.channel_id,
+                    "channel_name": row.channel_name,
+                    "subscribers":  row.subscribers,
+                    "total_views":  row.total_views,
+                    "total_videos": row.total_videos,
+                    "fetched_at":   row.fetched_at.isoformat() if row.fetched_at else None,
+                }
+                for row in rows
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"BQ query failed: {str(e)}")
+
+
+@youtube_router.get("/bq-videos/{channel_id}")
+def get_bq_videos(channel_id: str, days: int = 30):
+    """
+    Returns aggregated video stats for a channel from BQ video_analytics_daily.
+    One row per video, metrics summed over the requested date range.
+    Cached for 2 hours — data only updates once per night via pipeline.
+    """
+    def fetch():
+        bq = get_bq_client()
+        query = f"""
+            SELECT
+                video_id,
+                video_title,
+                video_type,
+                published_at,
+                SUM(views)                              AS views,
+                ROUND(SUM(watch_time_minutes) / 60, 2)  AS watch_time_hrs,
+                CAST(AVG(avg_view_duration_sec) AS INT64) AS avd,
+                SUM(subs_gained)                        AS subs_gained,
+                SUM(subs_lost)                          AS subs_lost,
+                SUM(net_subs)                           AS net_subs,
+                SUM(likes)                              AS likes,
+                SUM(comments)                           AS comments,
+                SUM(shares)                             AS shares
+            FROM `{TABLE_VIDEO}`
+            WHERE channel_id = @channel_id
+              AND date >= DATE_SUB(CURRENT_DATE(), INTERVAL @days DAY)
+            GROUP BY video_id, video_title, video_type, published_at
+            ORDER BY views DESC
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("channel_id", "STRING", channel_id),
+                bigquery.ScalarQueryParameter("days", "INT64", days),
+            ]
+        )
+        rows = list(bq.query(query, job_config=job_config).result())
+        return {
+            "channel_id": channel_id,
+            "days": days,
+            "videos": [
+                {
+                    "id":            row.video_id,
+                    "title":         row.video_title,
+                    "videoType":     row.video_type,
+                    "publishedAt":   row.published_at.isoformat() if row.published_at else None,
+                    "views":         row.views or 0,
+                    "watchTimeHrs":  float(row.watch_time_hrs or 0),
+                    "avd":           row.avd or 0,
+                    "subsGained":    row.subs_gained or 0,
+                    "subsLost":      row.subs_lost or 0,
+                    "netSubs":       row.net_subs or 0,
+                    "likes":         row.likes or 0,
+                    "comments":      row.comments or 0,
+                    "shares":        row.shares or 0,
+                    "convRatio":     round(((row.net_subs or 0) / row.views) * 100, 2) if (row.views or 0) > 0 else 0,
+                }
+                for row in rows
+            ]
         }
 
-    return get_cached(f"analytics:{channel_id}:{days}", CACHE_TTL_ANALYTICS, fetch)
+    return get_cached(f"bq-videos:{channel_id}:{days}", CACHE_TTL_BQ_VIDEOS, fetch)
+
+
+@youtube_router.get("/bq-video-daily/{video_id}")
+def get_bq_video_daily(video_id: str, channel_id: str, start: str, end: str):
+    """
+    Returns raw daily rows for a single video between start and end dates.
+    Used for the inline video drill-down chart and daily breakdown table.
+    Cached 2hrs per unique video+date range combination.
+    """
+    def fetch():
+        bq = get_bq_client()
+        query = f"""
+            SELECT
+                date,
+                views,
+                ROUND(watch_time_minutes / 60, 2)  AS watch_time_hrs,
+                avg_view_duration_sec               AS avd,
+                avg_view_percentage                 AS avg_view_pct,
+                subs_gained,
+                subs_lost,
+                net_subs,
+                likes,
+                comments,
+                shares,
+                impressions,
+                ctr
+            FROM `{TABLE_VIDEO}`
+            WHERE video_id  = @video_id
+              AND channel_id = @channel_id
+              AND date BETWEEN @start AND @end
+            ORDER BY date ASC
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("video_id",   "STRING", video_id),
+                bigquery.ScalarQueryParameter("channel_id", "STRING", channel_id),
+                bigquery.ScalarQueryParameter("start",      "DATE",   start),
+                bigquery.ScalarQueryParameter("end",        "DATE",   end),
+            ]
+        )
+        rows = list(bq.query(query, job_config=job_config).result())
+        return {
+            "video_id":  video_id,
+            "start":     start,
+            "end":       end,
+            "daily": [
+                {
+                    "date":         row.date.isoformat(),
+                    "views":        row.views or 0,
+                    "watchTimeHrs": float(row.watch_time_hrs or 0),
+                    "avd":          row.avd or 0,
+                    "avgViewPct":   float(row.avg_view_pct or 0),
+                    "subsGained":   row.subs_gained or 0,
+                    "subsLost":     row.subs_lost or 0,
+                    "netSubs":      row.net_subs or 0,
+                    "likes":        row.likes or 0,
+                    "comments":     row.comments or 0,
+                    "shares":       row.shares or 0,
+                    "impressions":  row.impressions or 0,
+                    "ctr":          float(row.ctr or 0),
+                }
+                for row in rows
+            ]
+        }
+
+    return get_cached(f"bq-video-daily:{video_id}:{start}:{end}", CACHE_TTL_BQ_VIDEOS, fetch)

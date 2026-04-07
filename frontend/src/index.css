@@ -51,6 +51,14 @@
   --toggle-knob: #ffffff;
   --row-number: #cbd5e1;
   --card-radius: 12px;
+
+  /* Expanded video drill-down panel */
+  --bg-expanded: #f8fafc;
+  --bg-expanded-header: #f1f5f9;
+  --bg-row-expanded: #fff7f7;
+  --bg-daily-header: #f1f5f9;
+  --bg-daily-row-even: #ffffff;
+  --bg-daily-row-odd: #f8fafc;
 }
 
 [data-theme="dark"] {
@@ -98,6 +106,14 @@
   --toggle-bg: #30363d;
   --toggle-knob: #c9d1d9;
   --row-number: #484f58;
+
+  /* Expanded video drill-down panel */
+  --bg-expanded: #0d1117;
+  --bg-expanded-header: #161b22;
+  --bg-row-expanded: #1a1020;
+  --bg-daily-header: #161b22;
+  --bg-daily-row-even: #151921;
+  --bg-daily-row-odd: #0d1117;
 }
 
 body {

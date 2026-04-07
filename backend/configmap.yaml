@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: yt-central-mind-backend
+data:
+  BQ_PROJECT: "adda247-dev"
+  BQ_DATASET: "yt_central_mind"
