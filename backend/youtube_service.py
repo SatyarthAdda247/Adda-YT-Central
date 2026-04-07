@@ -149,10 +149,10 @@ def get_channel_stats():
 
 
 @youtube_router.get("/bq-videos/{channel_id}")
-def get_bq_videos(channel_id: str, days: int = 30):
+def get_bq_videos(channel_id: str):
     """
-    Returns aggregated video stats for a channel from BQ video_analytics_daily.
-    One row per video, metrics summed over the requested date range.
+    Returns lifetime aggregated video stats for a channel from BQ video_analytics_daily.
+    One row per video, metrics summed over all available data.
     Cached for 2 hours — data only updates once per night via pipeline.
     """
     def fetch():
@@ -163,6 +163,7 @@ def get_bq_videos(channel_id: str, days: int = 30):
                 video_title,
                 video_type,
                 published_at,
+                MAX(teacher_name)                       AS teacher_name,
                 SUM(views)                              AS views,
                 ROUND(SUM(watch_time_minutes) / 60, 2)  AS watch_time_hrs,
                 CAST(AVG(avg_view_duration_sec) AS INT64) AS avd,
@@ -174,26 +175,24 @@ def get_bq_videos(channel_id: str, days: int = 30):
                 SUM(shares)                             AS shares
             FROM `{TABLE_VIDEO}`
             WHERE channel_id = @channel_id
-              AND date >= DATE_SUB(CURRENT_DATE(), INTERVAL @days DAY)
             GROUP BY video_id, video_title, video_type, published_at
             ORDER BY views DESC
         """
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ScalarQueryParameter("channel_id", "STRING", channel_id),
-                bigquery.ScalarQueryParameter("days", "INT64", days),
             ]
         )
         rows = list(bq.query(query, job_config=job_config).result())
         return {
             "channel_id": channel_id,
-            "days": days,
             "videos": [
                 {
                     "id":            row.video_id,
                     "title":         row.video_title,
                     "videoType":     row.video_type,
                     "publishedAt":   row.published_at.isoformat() if row.published_at else None,
+                    "teacherName":   row.teacher_name or None,
                     "views":         row.views or 0,
                     "watchTimeHrs":  float(row.watch_time_hrs or 0),
                     "avd":           row.avd or 0,
@@ -209,7 +208,7 @@ def get_bq_videos(channel_id: str, days: int = 30):
             ]
         }
 
-    return get_cached(f"bq-videos:{channel_id}:{days}", CACHE_TTL_BQ_VIDEOS, fetch)
+    return get_cached(f"bq-videos:{channel_id}", CACHE_TTL_BQ_VIDEOS, fetch)
 
 
 @youtube_router.get("/bq-video-daily/{video_id}")
@@ -233,9 +232,7 @@ def get_bq_video_daily(video_id: str, channel_id: str, start: str, end: str):
                 net_subs,
                 likes,
                 comments,
-                shares,
-                impressions,
-                ctr
+                shares
             FROM `{TABLE_VIDEO}`
             WHERE video_id  = @video_id
               AND channel_id = @channel_id
@@ -268,11 +265,65 @@ def get_bq_video_daily(video_id: str, channel_id: str, start: str, end: str):
                     "likes":        row.likes or 0,
                     "comments":     row.comments or 0,
                     "shares":       row.shares or 0,
-                    "impressions":  row.impressions or 0,
-                    "ctr":          float(row.ctr or 0),
                 }
                 for row in rows
             ]
         }
 
     return get_cached(f"bq-video-daily:{video_id}:{start}:{end}", CACHE_TTL_BQ_VIDEOS, fetch)
+
+
+@youtube_router.get("/bq-faculty")
+def get_bq_faculty():
+    """
+    Returns cumulative stats per teacher across all channels and all time.
+    Grouped by teacher_name from video_analytics_daily.
+    Cached 2hrs — updates nightly with pipeline.
+    """
+    def fetch():
+        bq = get_bq_client()
+        query = f"""
+            SELECT
+                teacher_name,
+                COUNT(DISTINCT video_id)                        AS total_videos,
+                COUNT(DISTINCT channel_id)                      AS total_channels,
+                SUM(views)                                      AS total_views,
+                ROUND(SUM(watch_time_minutes) / 60, 2)          AS total_watch_hrs,
+                CAST(AVG(avg_view_duration_sec) AS INT64)        AS avg_avd,
+                ROUND(AVG(avg_view_percentage), 2)              AS avg_view_pct,
+                SUM(subs_gained)                                AS total_subs_gained,
+                SUM(subs_lost)                                  AS total_subs_lost,
+                SUM(net_subs)                                   AS total_net_subs,
+                SUM(likes)                                      AS total_likes,
+                SUM(comments)                                   AS total_comments,
+                SUM(shares)                                     AS total_shares,
+                ROUND(SUM(views) / COUNT(DISTINCT video_id), 0) AS avg_views_per_video
+            FROM `{TABLE_VIDEO}`
+            WHERE teacher_name IS NOT NULL AND teacher_name != ''
+            GROUP BY teacher_name
+            ORDER BY total_views DESC
+        """
+        rows = list(bq.query(query).result())
+        return {
+            "faculty": [
+                {
+                    "name":             row.teacher_name,
+                    "totalVideos":      row.total_videos or 0,
+                    "totalChannels":    row.total_channels or 0,
+                    "totalViews":       row.total_views or 0,
+                    "totalWatchHrs":    float(row.total_watch_hrs or 0),
+                    "avgAvd":           row.avg_avd or 0,
+                    "avgViewPct":       float(row.avg_view_pct or 0),
+                    "totalSubsGained":  row.total_subs_gained or 0,
+                    "totalSubsLost":    row.total_subs_lost or 0,
+                    "totalNetSubs":     row.total_net_subs or 0,
+                    "totalLikes":       row.total_likes or 0,
+                    "totalComments":    row.total_comments or 0,
+                    "totalShares":      row.total_shares or 0,
+                    "avgViewsPerVideo": int(row.avg_views_per_video or 0),
+                }
+                for row in rows
+            ]
+        }
+
+    return get_cached("bq-faculty", CACHE_TTL_BQ_VIDEOS, fetch)

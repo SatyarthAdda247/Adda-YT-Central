@@ -217,12 +217,28 @@ function App() {
     }
   }, [mainTab]);
 
+  // Faculty state
+  const [faculty, setFaculty] = useState([]);
+  const [facultyLoading, setFacultyLoading] = useState(false);
+  const [facultySearch, setFacultySearch] = useState('');
+  const [facultySortBy, setFacultySortBy] = useState('totalViews');
+
+  useEffect(() => {
+    if (mainTab === 'teacher' && faculty.length === 0) {
+      setFacultyLoading(true);
+      axios.get(`${API_BASE_URL}/yt/bq-faculty`)
+        .then(res => setFaculty(res.data.faculty || []))
+        .catch(() => setFaculty([]))
+        .finally(() => setFacultyLoading(false));
+    }
+  }, [mainTab]);
+
   // Channel detail state
+  const days = 30;
   const [profile, setProfile] = useState(null);
   const [bqVideos, setBqVideos] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [days, setDays] = useState(30);
   const [videoSearch, setVideoSearch] = useState('');
   const [visibleColumns, setVisibleColumns] = useState(ALL_VIDEO_COLUMNS.filter(c => c.default).map(c => c.id));
   const [showConfig, setShowConfig] = useState(false);
@@ -284,13 +300,13 @@ function App() {
     setSelectedChannel(channel);
     setBreadcrumbs(prev => [...prev.slice(0, 2), { name: channel.name, type: 'channel' }]);
     setBusinessView('channel-detail');
-    fetchData(channel.id, days);
+    fetchData(channel.id);
   };
 
   const handleChannelTabClick = (channel) => {
     setSelectedChannel(channel);
     setMainTab('channel-detail-standalone');
-    fetchData(channel.id, days);
+    fetchData(channel.id);
   };
 
   const handleBreadcrumbClick = (index) => {
@@ -308,7 +324,7 @@ function App() {
   };
 
   // Data fetching
-  const fetchData = async (cid, queryDays = 30) => {
+  const fetchData = async (cid) => {
     if (!cid || cid.startsWith('UC_dummy')) {
       setProfile({
         identity: { name: 'Demo Channel', id: cid, custom_url: 'demo', thumbnail_url: '', country: 'IN', description: 'Dummy channel data' },
@@ -322,7 +338,7 @@ function App() {
     try {
       const [profRes, videosRes] = await Promise.all([
         axios.get(`${API_BASE_URL}/yt/channel/${cid}`),
-        axios.get(`${API_BASE_URL}/yt/bq-videos/${cid}?days=${queryDays}`)
+        axios.get(`${API_BASE_URL}/yt/bq-videos/${cid}`)
       ]);
       setProfile(profRes.data);
       setBqVideos(videosRes.data.videos || []);
@@ -340,7 +356,6 @@ function App() {
     // Otherwise, make this type the only active one
     return { Video: type === 'Video', Shorts: type === 'Shorts', Live: type === 'Live' };
   });
-  const handleDaysChange = (newDays) => { setDays(newDays); if (selectedChannel) fetchData(selectedChannel.id, newDays); };
 
   const formatNumber = (num) => {
     if (num === undefined || num === null) return '0';
@@ -451,7 +466,7 @@ function App() {
               ].map(tab => (
                 <button
                   key={tab.id}
-                  onClick={() => { setMainTab(tab.id); setBusinessView('list'); setBreadcrumbs([]); setProfile(null); setAnalytics(null); }}
+                  onClick={() => { setMainTab(tab.id); setBusinessView('list'); setBreadcrumbs([]); setProfile(null); }}
                   className="flex items-center gap-2 px-6 py-4 text-[11px] font-bold tracking-wide uppercase transition-all relative group"
                   style={{
                     color: mainTab === tab.id ? v('accent') : v('tab-inactive'),
@@ -563,7 +578,6 @@ function App() {
                 selectedChannel={selectedChannel}
                 setCurrentPage={setCurrentPage} setShowConfig={setShowConfig}
                 toggleColumn={toggleColumn} toggleVideoType={toggleVideoType}
-                onDaysChange={handleDaysChange}
                 formatNumber={formatNumber} formatAvd={formatAvd} />
             )}
           </>
@@ -716,37 +730,115 @@ function App() {
 
         {/* ===================== TEACHER TAB ===================== */}
         {mainTab === 'teacher' && (
-          <div className="rounded-xl overflow-hidden transition-colors" style={{ backgroundColor: v('bg-card'), border: `1px solid ${v('border-card')}`, boxShadow: v('card-shadow') }}>
-            <div className="p-5" style={{ borderBottom: `1px solid ${v('border-light')}` }}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-bold flex items-center gap-2" style={{ color: v('text-heading') }}>
-                    <Trophy size={18} className="text-amber-500" /> Teacher Leaderboard
-                  </h2>
-                  <p className="text-xs mt-0.5" style={{ color: v('text-label') }}>Faculty performance based on video analytics · Data from CURL API mapping</p>
-                </div>
-                <span className="text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200 px-3 py-1 rounded-full uppercase tracking-wider">Coming Soon</span>
+          <div className="space-y-6 animate-fade-in">
+            {/* Header */}
+            <div className="rounded-2xl p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
+              style={{ backgroundColor: v('bg-card'), border: `1px solid ${v('border-card')}`, boxShadow: v('card-shadow') }}>
+              <div>
+                <h2 className="text-2xl font-black tracking-tight flex items-center gap-3" style={{ color: v('text-heading') }}>
+                  <Trophy size={22} className="text-amber-500" /> Faculty Metrics
+                </h2>
+                <p className="text-[13px] font-bold mt-1" style={{ color: v('text-label') }}>
+                  Cumulative performance across all channels · Ranked by total views
+                </p>
+              </div>
+              {/* Search */}
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl border w-full sm:w-64"
+                style={{ backgroundColor: v('bg-input'), borderColor: v('border-card') }}>
+                <Search size={13} style={{ color: v('text-placeholder') }} />
+                <input value={facultySearch} onChange={e => setFacultySearch(e.target.value)}
+                  placeholder="Search faculty..."
+                  className="bg-transparent text-[12px] font-bold outline-none w-full"
+                  style={{ color: v('text-primary') }} />
               </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr style={{ backgroundColor: v('bg-table-header') }}>
-                    {['Rank', 'Teacher', 'Channel', 'Videos', 'Total Views', 'Watch Time (H)', 'Net Subs', 'Avg Views/Video'].map((h, i) => (
-                      <th key={h} className={`px-5 py-3 text-[10px] font-bold uppercase tracking-wider ${i < 3 ? 'text-left' : 'text-center'}`} style={{ color: v('text-table-header') }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr><td colSpan={8} className="px-5 py-16 text-center">
-                    <div className="flex flex-col items-center gap-3">
-                      <Trophy size={40} style={{ color: v('border-card') }} />
-                      <p className="text-sm font-semibold" style={{ color: v('text-secondary') }}>Teacher leaderboard will be available once CURL API integration and BQ pipeline is connected.</p>
-                      <p className="text-xs" style={{ color: v('text-label') }}>Faculty mapped via video_id from the admin scheduling system</p>
-                    </div>
-                  </td></tr>
-                </tbody>
-              </table>
+
+            {/* Sort tabs */}
+            <div className="flex flex-wrap gap-2">
+              {[
+                { id: 'totalViews', label: 'Views' },
+                { id: 'totalWatchHrs', label: 'Watch Time' },
+                { id: 'avgViewsPerVideo', label: 'Avg Views/Video' },
+                { id: 'totalNetSubs', label: 'Net Subs' },
+                { id: 'totalVideos', label: 'Videos' },
+              ].map(s => (
+                <button key={s.id} onClick={() => setFacultySortBy(s.id)}
+                  className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider border transition-all"
+                  style={{
+                    backgroundColor: facultySortBy === s.id ? v('accent') : 'transparent',
+                    color: facultySortBy === s.id ? '#fff' : v('text-secondary'),
+                    borderColor: facultySortBy === s.id ? v('accent') : v('border-card'),
+                  }}>{s.label}</button>
+              ))}
+            </div>
+
+            {/* Leaderboard table */}
+            <div className="rounded-2xl overflow-hidden border" style={{ backgroundColor: v('bg-card'), borderColor: v('border-card'), boxShadow: v('card-shadow') }}>
+              {facultyLoading ? (
+                <div className="flex items-center justify-center py-24">
+                  <Loader2 size={32} className="animate-spin" style={{ color: v('accent') }} />
+                </div>
+              ) : (
+                <table className="w-full text-[12px]">
+                  <thead>
+                    <tr style={{ backgroundColor: v('bg-table-header') }}>
+                      {[
+                        { label: '#', center: true },
+                        { label: 'Faculty', center: false },
+                        { label: 'Channels', center: true },
+                        { label: 'Videos', center: true },
+                        { label: 'Total Views', center: true },
+                        { label: 'Watch Time', center: true },
+                        { label: 'Avg Views/Video', center: true },
+                        { label: 'AVD', center: true },
+                        { label: 'Net Subs', center: true },
+                        { label: 'Likes', center: true },
+                        { label: 'Comments', center: true },
+                      ].map(h => (
+                        <th key={h.label} className={`px-4 py-3 text-[10px] font-black uppercase tracking-widest ${h.center ? 'text-center' : 'text-left'}`}
+                          style={{ color: v('text-table-header') }}>{h.label}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {faculty
+                      .filter(f => !facultySearch || f.name.toLowerCase().includes(facultySearch.toLowerCase()))
+                      .sort((a, b) => (b[facultySortBy] || 0) - (a[facultySortBy] || 0))
+                      .map((f, idx) => (
+                        <tr key={f.name}
+                          className="border-t transition-all"
+                          style={{ borderColor: v('border-table') }}
+                          onMouseEnter={e => e.currentTarget.style.backgroundColor = v('bg-table-row-hover')}
+                          onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                          {/* Rank */}
+                          <td className="px-4 py-3 text-center">
+                            {idx === 0 ? <span className="text-lg">🥇</span>
+                              : idx === 1 ? <span className="text-lg">🥈</span>
+                              : idx === 2 ? <span className="text-lg">🥉</span>
+                              : <span className="font-black text-[11px]" style={{ color: v('text-label') }}>{idx + 1}</span>}
+                          </td>
+                          {/* Name */}
+                          <td className="px-4 py-3">
+                            <p className="font-black text-[12px]" style={{ color: v('text-heading') }}>{f.name}</p>
+                          </td>
+                          <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{f.totalChannels}</td>
+                          <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalVideos)}</td>
+                          <td className="px-4 py-3 text-center font-black" style={{ color: v('accent') }}>{formatNumber(f.totalViews)}</td>
+                          <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalWatchHrs)}h</td>
+                          <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.avgViewsPerVideo)}</td>
+                          <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatAvd(f.avgAvd)}</td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`font-black ${f.totalNetSubs >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                              {f.totalNetSubs >= 0 ? '+' : ''}{formatNumber(f.totalNetSubs)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalLikes)}</td>
+                          <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalComments)}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         )}
@@ -768,7 +860,6 @@ function App() {
             selectedChannel={selectedChannel}
             setCurrentPage={setCurrentPage} setShowConfig={setShowConfig}
             toggleColumn={toggleColumn} toggleVideoType={toggleVideoType}
-            onDaysChange={handleDaysChange}
             formatNumber={formatNumber} formatAvd={formatAvd} />
         )}
 
@@ -1085,7 +1176,7 @@ function VideoDrillDown({ video, channelId, dailyCache, dailyLoading, fetchDaily
 // ============================================================
 // CHANNEL DETAIL COMPONENT
 // ============================================================
-function ChannelDetail({ profile, loading, days, filteredVideos, paginatedVideos,
+function ChannelDetail({ profile, loading, filteredVideos, paginatedVideos,
   currentPage, totalPages, videosPerPage, visibleColumns, showConfig, videoTypeFilter,
   videoSearch, setVideoSearch,
   pubDateFrom, setPubDateFrom, pubDateTo, setPubDateTo,
@@ -1157,7 +1248,7 @@ function ChannelDetail({ profile, loading, days, filteredVideos, paginatedVideos
                 Live Performance Data
               </h2>
               <p className="text-[13px] font-bold mt-1" style={{ color: v('text-label') }}>
-                Showing <span className="text-rose-500">{filteredVideos.length} videos</span> · Stats aggregated over last {days} days · Click any row to expand daily breakdown
+                Showing <span className="text-rose-500">{filteredVideos.length} videos</span> · Lifetime stats · Click any row to expand daily breakdown
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -1291,7 +1382,10 @@ function ChannelDetail({ profile, loading, days, filteredVideos, paginatedVideos
                           </a>
                         </div>
                         <div className="space-y-1 overflow-hidden min-w-0">
-                          <h4 className="text-[12px] font-black leading-tight truncate" style={{ color: expandedVideoId === video.id ? v('accent') : v('text-heading') }}>{video.title}</h4>
+                          <h4 className="text-[11px] font-black leading-tight truncate" style={{ color: expandedVideoId === video.id ? v('accent') : v('text-heading') }}>{video.title}</h4>
+                          {video.teacherName && (
+                            <p className="text-[10px] font-bold truncate" style={{ color: v('accent') }}>👤 {video.teacherName}</p>
+                          )}
                           <div className="flex items-center gap-2">
                             <span className="text-[9px] font-black uppercase tracking-wider shrink-0" style={{ color: v('text-label') }}>
                               {new Date(video.publishedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
