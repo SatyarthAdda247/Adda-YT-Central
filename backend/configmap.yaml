@@ -5,3 +5,4 @@ metadata:
 data:
   BQ_PROJECT: "adda247-dev"
   BQ_DATASET: "yt_central_mind"
+  FRONTEND_URL: "https://yt-central-mind.adda247.com"

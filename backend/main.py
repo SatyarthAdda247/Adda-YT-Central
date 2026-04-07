@@ -6,6 +6,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import uvicorn
 
+# In production, FRONTEND_URL is set via ConfigMap/env.
+# Falls back to localhost for local development.
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+
 # Import the router from our data service module
 from youtube_service import youtube_router
 
@@ -17,7 +21,7 @@ app = FastAPI(
 # Enable CORS for the React Dashboard
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "*"], # Allow Vite default port and wildcard for testing
+    allow_origins=[FRONTEND_URL],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -55,9 +59,6 @@ else:
 
 
 if __name__ == "__main__":
-    # Allow OAuth over HTTP for local testing during development
-    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
-
     print("\n" + "=" * 60)
     print("🚀 YouTube Data Analytics Server")
     print("   Data APIs: http://localhost:8000/yt/...")
