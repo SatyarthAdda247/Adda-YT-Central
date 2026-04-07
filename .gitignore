@@ -1,8 +1,18 @@
 # Secrets & credentials
 backend/client_secret.json
 backend/tokens.json
+backend/*service_account*.json
+backend/*servcie_account*.json
+backend/backfill_progress.json
+backend/failed_dates.log
+
 .env
 .env.*
+
+# Pipeline / internal files
+backend/*.csv
+backend/bq_pipeline.py
+backend/bq_create_tables.sql
 
 # Python
 __pycache__/
@@ -33,4 +43,3 @@ Thumbs.db
 
 
 .claude
-.render.yaml

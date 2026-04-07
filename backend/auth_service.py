@@ -14,6 +14,7 @@ CLIENT_SECRETS_FILE = "client_secret.json"
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.readonly",
     "https://www.googleapis.com/auth/yt-analytics.readonly",
+    "https://www.googleapis.com/auth/youtubepartner",
 ]
 # Updated redirect URI to match the new auth service port (8001)
 REDIRECT_URI = "http://localhost:8001/auth/callback"
