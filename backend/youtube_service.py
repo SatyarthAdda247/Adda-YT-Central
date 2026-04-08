@@ -1,3 +1,6 @@
+import io
+import json
+import os
 import time
 from datetime import datetime
 from pathlib import Path
@@ -9,13 +12,20 @@ from google.cloud import bigquery
 BQ_PROJECT    = "adda247-dev"
 BQ_DATASET    = "yt_central_mind"
 TABLE_CHANNEL = f"{BQ_PROJECT}.{BQ_DATASET}.channel_daily_snapshot"
-TABLE_VIDEO   = f"{BQ_PROJECT}.{BQ_DATASET}.video_analytics_daily_v2"
+TABLE_VIDEO   = f"{BQ_PROJECT}.{BQ_DATASET}.video_analytics_daily"
 SA_PATH       = Path(__file__).parent / "servcie_account_adda247-dev.json"
 
 def get_bq_client():
-    creds = service_account.Credentials.from_service_account_file(
-        str(SA_PATH), scopes=["https://www.googleapis.com/auth/bigquery"]
-    )
+    sa_json = os.environ.get("GCP_SA_JSON") or os.environ.get("service_account_adda247_dev_json")
+    if sa_json:
+        info = json.loads(sa_json)
+        creds = service_account.Credentials.from_service_account_info(
+            info, scopes=["https://www.googleapis.com/auth/bigquery"]
+        )
+    else:
+        creds = service_account.Credentials.from_service_account_file(
+            str(SA_PATH), scopes=["https://www.googleapis.com/auth/bigquery"]
+        )
     return bigquery.Client(project=BQ_PROJECT, credentials=creds)
 
 # ============================================================
@@ -163,7 +173,7 @@ def get_bq_videos(channel_id: str):
                 video_title,
                 video_type,
                 published_at,
-                MAX(duration)                           AS duration,
+                MAX(teacher_name)                       AS teacher_name,
                 SUM(views)                              AS views,
                 ROUND(SUM(watch_time_minutes) / 60, 2)  AS watch_time_hrs,
                 CAST(AVG(avg_view_duration_sec) AS INT64) AS avd,
@@ -192,7 +202,7 @@ def get_bq_videos(channel_id: str):
                     "title":         row.video_title,
                     "videoType":     row.video_type,
                     "publishedAt":   row.published_at.isoformat() if row.published_at else None,
-                    "duration":      row.duration or None,
+                    "teacherName":   row.teacher_name or None,
                     "views":         row.views or 0,
                     "watchTimeHrs":  float(row.watch_time_hrs or 0),
                     "avd":           row.avd or 0,

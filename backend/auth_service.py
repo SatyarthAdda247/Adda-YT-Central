@@ -23,7 +23,7 @@ TOKEN_FILE = "tokens.json"
 
 def get_credentials_from_env():
     """Try to load credentials from environment variables (for Render/production)."""
-    token_json = os.environ.get("GOOGLE_TOKENS_JSON")
+    token_json = os.environ.get("GOOGLE_TOKENS_JSON") or os.environ.get("tokens_json")
     if not token_json:
         return None
     try:
