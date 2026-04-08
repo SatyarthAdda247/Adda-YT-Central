@@ -222,6 +222,10 @@ function App() {
   const [facultyLoading, setFacultyLoading] = useState(false);
   const [facultySearch, setFacultySearch] = useState('');
   const [facultySortBy, setFacultySortBy] = useState('totalViews');
+  const [expandedTeacher, setExpandedTeacher] = useState(null);
+  const [teacherVideos, setTeacherVideos] = useState({});
+  const [teacherVideosLoading, setTeacherVideosLoading] = useState(false);
+  const [channelVideoLimit, setChannelVideoLimit] = useState({});  // { "teacherName:channelName": limit }
 
   useEffect(() => {
     if (mainTab === 'teacher' && faculty.length === 0) {
@@ -259,8 +263,6 @@ function App() {
 
   // Per-expanded-video state
   const [expandedMetric, setExpandedMetric] = useState('views');
-  const [expandedDateFrom, setExpandedDateFrom] = useState('');
-  const [expandedDateTo, setExpandedDateTo] = useState('');
 
   // Collect all channels for the Channel tab
   const allChannels = [];
@@ -394,13 +396,10 @@ function App() {
       return;
     }
     setExpandedVideoId(video.id);
-    // Start 1 day before publishedAt to account for UTC vs IST timezone offset
-    const pubDate = video.publishedAt ? new Date(video.publishedAt) : new Date('2026-01-01');
-    pubDate.setDate(pubDate.getDate() - 1);
-    const start = pubDate.toISOString().substring(0, 10);
-    const end = new Date().toISOString().substring(0, 10);
-    setExpandedDateFrom(start);
-    setExpandedDateTo(end);
+    const start = '2020-01-01';
+    const maxD = new Date();
+    maxD.setDate(maxD.getDate() - 2);
+    const end = maxD.toISOString().substring(0, 10);
     fetchDailyData(video, selectedChannel?.id, start, end);
   };
 
@@ -571,11 +570,8 @@ function App() {
                 pubDateFrom={pubDateFrom} setPubDateFrom={setPubDateFrom}
                 pubDateTo={pubDateTo} setPubDateTo={setPubDateTo}
                 expandedVideoId={expandedVideoId} expandedMetric={expandedMetric} setExpandedMetric={setExpandedMetric}
-                expandedDateFrom={expandedDateFrom} setExpandedDateFrom={setExpandedDateFrom}
-                expandedDateTo={expandedDateTo} setExpandedDateTo={setExpandedDateTo}
                 dailyCache={dailyCache} dailyLoading={dailyLoading}
-                onVideoRowClick={handleVideoRowClick} fetchDailyData={fetchDailyData}
-                selectedChannel={selectedChannel}
+                onVideoRowClick={handleVideoRowClick}
                 setCurrentPage={setCurrentPage} setShowConfig={setShowConfig}
                 toggleColumn={toggleColumn} toggleVideoType={toggleVideoType}
                 formatNumber={formatNumber} formatAvd={formatAvd} />
@@ -805,36 +801,148 @@ function App() {
                       .filter(f => !facultySearch || f.name.toLowerCase().includes(facultySearch.toLowerCase()))
                       .sort((a, b) => (b[facultySortBy] || 0) - (a[facultySortBy] || 0))
                       .map((f, idx) => (
-                        <tr key={f.name}
-                          className="border-t transition-all"
-                          style={{ borderColor: v('border-table') }}
-                          onMouseEnter={e => e.currentTarget.style.backgroundColor = v('bg-table-row-hover')}
-                          onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
-                          {/* Rank */}
-                          <td className="px-4 py-3 text-center">
-                            {idx === 0 ? <span className="text-lg">🥇</span>
-                              : idx === 1 ? <span className="text-lg">🥈</span>
-                              : idx === 2 ? <span className="text-lg">🥉</span>
-                              : <span className="font-black text-[11px]" style={{ color: v('text-label') }}>{idx + 1}</span>}
-                          </td>
-                          {/* Name */}
-                          <td className="px-4 py-3">
-                            <p className="font-black text-[12px]" style={{ color: v('text-heading') }}>{f.name}</p>
-                          </td>
-                          <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{f.totalChannels}</td>
-                          <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalVideos)}</td>
-                          <td className="px-4 py-3 text-center font-black" style={{ color: v('accent') }}>{formatNumber(f.totalViews)}</td>
-                          <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalWatchHrs)}h</td>
-                          <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.avgViewsPerVideo)}</td>
-                          <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatAvd(f.avgAvd)}</td>
-                          <td className="px-4 py-3 text-center">
-                            <span className={`font-black ${f.totalNetSubs >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                              {f.totalNetSubs >= 0 ? '+' : ''}{formatNumber(f.totalNetSubs)}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalLikes)}</td>
-                          <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalComments)}</td>
-                        </tr>
+                        <>
+                          <tr key={f.name} onClick={() => {
+                              if (expandedTeacher === f.name) { setExpandedTeacher(null); return; }
+                              setExpandedTeacher(f.name);
+                              if (!teacherVideos[f.name]) {
+                                setTeacherVideosLoading(true);
+                                axios.get(`${API_BASE_URL}/yt/bq-faculty-videos/${encodeURIComponent(f.name)}`)
+                                  .then(res => setTeacherVideos(prev => ({ ...prev, [f.name]: res.data.channels || [] })))
+                                  .catch(() => setTeacherVideos(prev => ({ ...prev, [f.name]: [] })))
+                                  .finally(() => setTeacherVideosLoading(false));
+                              }
+                            }}
+                            className="border-t cursor-pointer transition-all"
+                            style={{ borderColor: v('border-table'), backgroundColor: expandedTeacher === f.name ? v('bg-row-expanded') : 'transparent' }}
+                            onMouseEnter={e => { if (expandedTeacher !== f.name) e.currentTarget.style.backgroundColor = v('bg-table-row-hover'); }}
+                            onMouseLeave={e => { e.currentTarget.style.backgroundColor = expandedTeacher === f.name ? v('bg-row-expanded') : 'transparent'; }}>
+                            <td className="px-4 py-3 text-center">
+                              {idx === 0 ? <span className="text-lg">🥇</span>
+                                : idx === 1 ? <span className="text-lg">🥈</span>
+                                : idx === 2 ? <span className="text-lg">🥉</span>
+                                : <span className="font-black text-[11px]" style={{ color: v('text-label') }}>{idx + 1}</span>}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-2">
+                                <ChevronRight size={13} className="transition-transform shrink-0"
+                                  style={{ color: v('accent'), transform: expandedTeacher === f.name ? 'rotate(90deg)' : 'rotate(0deg)' }} />
+                                <p className="font-black text-[12px]" style={{ color: expandedTeacher === f.name ? v('accent') : v('text-heading') }}>{f.name}</p>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{f.totalChannels}</td>
+                            <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalVideos)}</td>
+                            <td className="px-4 py-3 text-center font-black" style={{ color: v('accent') }}>{formatNumber(f.totalViews)}</td>
+                            <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalWatchHrs)}h</td>
+                            <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.avgViewsPerVideo)}</td>
+                            <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatAvd(f.avgAvd)}</td>
+                            <td className="px-4 py-3 text-center">
+                              <span className={`font-black ${f.totalNetSubs >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                {f.totalNetSubs >= 0 ? '+' : ''}{formatNumber(f.totalNetSubs)}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalLikes)}</td>
+                            <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalComments)}</td>
+                          </tr>
+                          {/* Expanded teacher drill-down */}
+                          {expandedTeacher === f.name && (
+                            <tr key={`${f.name}-expanded`}>
+                              <td colSpan={11} className="p-0">
+                                <div className="mx-4 mb-4 mt-1 rounded-2xl overflow-hidden border-l-4"
+                                  style={{ borderLeftColor: v('accent'), backgroundColor: v('bg-expanded'), border: `1px solid ${v('border-card')}`, borderLeftWidth: '4px' }}>
+                                  {/* Header */}
+                                  <div className="px-6 py-4 flex items-center gap-3"
+                                    style={{ backgroundColor: v('bg-expanded-header'), borderBottom: `1px solid ${v('border-light')}` }}>
+                                    <Trophy size={16} className="text-amber-500 shrink-0" />
+                                    <div>
+                                      <p className="text-[13px] font-black" style={{ color: v('text-heading') }}>{f.name}</p>
+                                      <p className="text-[10px] font-bold mt-0.5" style={{ color: v('text-label') }}>
+                                        {f.totalVideos} videos across {f.totalChannels} channels
+                                      </p>
+                                    </div>
+                                  </div>
+                                  {/* Content */}
+                                  {teacherVideosLoading && !teacherVideos[f.name] ? (
+                                    <div className="flex items-center justify-center py-10">
+                                      <Loader2 size={24} className="animate-spin" style={{ color: v('accent') }} />
+                                    </div>
+                                  ) : (
+                                    <div className="p-4 space-y-4">
+                                      {(teacherVideos[f.name] || []).map(ch => (
+                                        <div key={ch.channelId} className="rounded-xl overflow-hidden border" style={{ borderColor: v('border-card') }}>
+                                          {/* Channel header */}
+                                          <div className="px-4 py-2.5 flex items-center gap-2"
+                                            style={{ backgroundColor: v('bg-expanded-header'), borderBottom: `1px solid ${v('border-light')}` }}>
+                                            <MonitorPlay size={13} style={{ color: v('accent') }} />
+                                            <p className="text-[11px] font-black uppercase tracking-wider" style={{ color: v('text-heading') }}>{ch.channelName}</p>
+                                            <span className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full"
+                                              style={{ backgroundColor: v('accent-soft'), color: v('accent') }}>{ch.videos.length} videos</span>
+                                          </div>
+                                          {/* Videos table */}
+                                          <table className="w-full text-[11px]">
+                                            <thead>
+                                              <tr style={{ backgroundColor: v('bg-daily-header') }}>
+                                                {['Video', 'Type', 'Published', 'Views', 'Watch Time', 'AVD', 'Net Subs', 'Likes'].map((h, i) => (
+                                                  <th key={h} className={`px-3 py-2 text-[9px] font-black uppercase tracking-wider ${i === 0 ? 'text-left' : 'text-center'}`}
+                                                    style={{ color: v('text-table-header') }}>{h}</th>
+                                                ))}
+                                              </tr>
+                                            </thead>
+                                            <tbody>
+                                              {ch.videos.slice(0, channelVideoLimit[`${f.name}:${ch.channelName}`] || 10).map((video, vi) => (
+                                                <tr key={video.id}
+                                                  style={{ backgroundColor: vi % 2 === 0 ? v('bg-daily-row-even') : v('bg-daily-row-odd') }}>
+                                                  <td className="px-3 py-2">
+                                                    <div className="flex items-center gap-2">
+                                                      <img src={`https://i.ytimg.com/vi/${video.id}/mqdefault.jpg`}
+                                                        onError={e => { e.target.src = `https://i.ytimg.com/vi/${video.id}/hqdefault.jpg`; }}
+                                                        className="w-12 h-7 rounded object-cover shrink-0" />
+                                                      <a href={`https://youtube.com/watch?v=${video.id}`} target="_blank" rel="noreferrer"
+                                                        onClick={e => e.stopPropagation()}
+                                                        className="text-[11px] font-bold truncate max-w-[280px] hover:underline"
+                                                        style={{ color: v('text-heading') }}>{video.title}</a>
+                                                    </div>
+                                                  </td>
+                                                  <td className="px-3 py-2 text-center">
+                                                    <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded border ${
+                                                      video.videoType === 'Shorts' ? 'bg-amber-50 text-amber-600 border-amber-200'
+                                                      : video.videoType === 'Live' ? 'bg-rose-50 text-rose-600 border-rose-200'
+                                                      : 'bg-emerald-50 text-emerald-600 border-emerald-200'
+                                                    }`}>{video.videoType}</span>
+                                                  </td>
+                                                  <td className="px-3 py-2 text-center font-bold" style={{ color: v('text-label') }}>
+                                                    {video.publishedAt ? new Date(video.publishedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                                                  </td>
+                                                  <td className="px-3 py-2 text-center font-black" style={{ color: v('accent') }}>{formatNumber(video.views)}</td>
+                                                  <td className="px-3 py-2 text-center font-bold" style={{ color: v('text-body') }}>{video.watchTimeHrs}h</td>
+                                                  <td className="px-3 py-2 text-center font-bold" style={{ color: v('text-body') }}>{formatAvd(video.avd)}</td>
+                                                  <td className="px-3 py-2 text-center">
+                                                    <span className={`font-black ${video.netSubs >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                                      {video.netSubs >= 0 ? '+' : ''}{video.netSubs}
+                                                    </span>
+                                                  </td>
+                                                  <td className="px-3 py-2 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(video.likes)}</td>
+                                                </tr>
+                                              ))}
+                                            </tbody>
+                                          </table>
+                                          {ch.videos.length > (channelVideoLimit[`${f.name}:${ch.channelName}`] || 10) && (
+                                            <button
+                                              onClick={() => setChannelVideoLimit(prev => ({ ...prev, [`${f.name}:${ch.channelName}`]: (prev[`${f.name}:${ch.channelName}`] || 10) + 10 }))}
+                                              className="w-full py-2.5 text-[10px] font-black uppercase tracking-wider transition-all"
+                                              style={{ backgroundColor: v('bg-expanded-header'), color: v('accent'), borderTop: `1px solid ${v('border-light')}` }}>
+                                              Show more ({ch.videos.length - (channelVideoLimit[`${f.name}:${ch.channelName}`] || 10)} remaining)
+                                            </button>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </>
                       ))}
                   </tbody>
                 </table>
@@ -853,11 +961,8 @@ function App() {
             pubDateFrom={pubDateFrom} setPubDateFrom={setPubDateFrom}
             pubDateTo={pubDateTo} setPubDateTo={setPubDateTo}
             expandedVideoId={expandedVideoId} expandedMetric={expandedMetric} setExpandedMetric={setExpandedMetric}
-            expandedDateFrom={expandedDateFrom} setExpandedDateFrom={setExpandedDateFrom}
-            expandedDateTo={expandedDateTo} setExpandedDateTo={setExpandedDateTo}
             dailyCache={dailyCache} dailyLoading={dailyLoading}
-            onVideoRowClick={handleVideoRowClick} fetchDailyData={fetchDailyData}
-            selectedChannel={selectedChannel}
+            onVideoRowClick={handleVideoRowClick}
             setCurrentPage={setCurrentPage} setShowConfig={setShowConfig}
             toggleColumn={toggleColumn} toggleVideoType={toggleVideoType}
             formatNumber={formatNumber} formatAvd={formatAvd} />
@@ -953,11 +1058,12 @@ const DAILY_METRICS = [
   { id: 'shares',      label: 'Shares',      color: '#f97316' },
 ];
 
-function VideoDrillDown({ video, channelId, dailyCache, dailyLoading, fetchDailyData,
-  expandedMetric, setExpandedMetric, expandedDateFrom, setExpandedDateFrom,
-  expandedDateTo, setExpandedDateTo, colSpan, formatNumber, formatAvd }) {
+function VideoDrillDown({ video, dailyCache, dailyLoading,
+  expandedMetric, setExpandedMetric, colSpan, formatNumber, formatAvd }) {
 
-  const cacheKey = `${video.id}:${expandedDateFrom}:${expandedDateTo}`;
+  const maxD = new Date(); maxD.setDate(maxD.getDate() - 2);
+  const end = maxD.toISOString().substring(0, 10);
+  const cacheKey = `${video.id}:2020-01-01:${end}`;
   const dailyData = dailyCache[cacheKey] || [];
   const metricMeta = DAILY_METRICS.find(m => m.id === expandedMetric) || DAILY_METRICS[0];
 
@@ -977,26 +1083,6 @@ function VideoDrillDown({ video, channelId, dailyCache, dailyLoading, fetchDaily
   const [showColPicker, setShowColPicker] = useState(false);
   const toggleDailyCol = (id) => setVisibleDailyCols(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
 
-  // Min: publishedAt minus 1 day (UTC buffer for IST offset)
-  const minDate = (() => {
-    const d = new Date(video.publishedAt || '2020-01-01');
-    d.setDate(d.getDate() - 1);
-    return d.toISOString().substring(0, 10);
-  })();
-
-  // Max: today minus 2 days (YouTube Analytics D-2 lag)
-  const maxDate = (() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 2);
-    return d.toISOString().substring(0, 10);
-  })();
-
-  const handleDateChange = (from, to) => {
-    if (from && to && from <= to) {
-      fetchDailyData(video, channelId, from, to);
-    }
-  };
-
   return (
     <tr>
       <td colSpan={colSpan} className="p-0">
@@ -1008,10 +1094,8 @@ function VideoDrillDown({ video, channelId, dailyCache, dailyLoading, fetchDaily
           <div className="px-6 py-4 flex flex-wrap items-center justify-between gap-4"
             style={{ backgroundColor: v('bg-expanded-header'), borderBottom: `1px solid ${v('border-light')}` }}>
             <div className="flex items-center gap-3">
-              <img src={`https://i.ytimg.com/vi/${video.id}/mqdefault.jpg`}
-                className="w-16 h-9 rounded-lg object-cover shadow" />
               <div>
-                <p className="text-[12px] font-black truncate max-w-[400px]" style={{ color: v('text-heading') }}>{video.title}</p>
+                <p className="text-[12px] font-black truncate max-w-[500px]" style={{ color: v('text-heading') }}>{video.title}</p>
                 <p className="text-[10px] font-bold mt-0.5" style={{ color: v('text-label') }}>
                   Daily Breakdown · {dailyData.length} days with activity
                 </p>
@@ -1043,18 +1127,6 @@ function VideoDrillDown({ video, channelId, dailyCache, dailyLoading, fetchDaily
                 )}
               </div>
 
-              {/* Date range picker */}
-              <input type="date" value={expandedDateFrom}
-                min={minDate} max={expandedDateTo || maxDate}
-                onChange={e => { setExpandedDateFrom(e.target.value); handleDateChange(e.target.value, expandedDateTo); }}
-                className="px-3 py-1.5 rounded-lg text-[11px] font-bold border outline-none"
-                style={{ backgroundColor: v('bg-input'), color: v('text-primary'), borderColor: v('border-card') }} />
-              <span className="text-[11px] font-black" style={{ color: v('text-label') }}>→</span>
-              <input type="date" value={expandedDateTo}
-                min={expandedDateFrom || minDate} max={maxDate}
-                onChange={e => { setExpandedDateTo(e.target.value); handleDateChange(expandedDateFrom, e.target.value); }}
-                className="px-3 py-1.5 rounded-lg text-[11px] font-bold border outline-none"
-                style={{ backgroundColor: v('bg-input'), color: v('text-primary'), borderColor: v('border-card') }} />
               </div>
           </div>
 
@@ -1181,8 +1253,7 @@ function ChannelDetail({ profile, loading, filteredVideos, paginatedVideos,
   videoSearch, setVideoSearch,
   pubDateFrom, setPubDateFrom, pubDateTo, setPubDateTo,
   expandedVideoId, expandedMetric, setExpandedMetric,
-  expandedDateFrom, setExpandedDateFrom, expandedDateTo, setExpandedDateTo,
-  dailyCache, dailyLoading, onVideoRowClick, fetchDailyData, selectedChannel,
+  dailyCache, dailyLoading, onVideoRowClick,
   setCurrentPage, setShowConfig, toggleColumn, toggleVideoType,
   formatNumber, formatAvd }) {
 
@@ -1342,7 +1413,7 @@ function ChannelDetail({ profile, loading, filteredVideos, paginatedVideos,
                 <col key={id} style={{ width: `${Math.min(9, Math.floor(69 / visibleColumns.length))}%` }} />
               ))}
             </colgroup>
-            <thead>
+            <thead className="sticky top-[56px] z-[50]">
               <tr style={{ backgroundColor: v('bg-table-header') }}>
                 <th className="px-2 py-4 text-left text-[10px] font-black uppercase tracking-widest" style={{ color: v('text-table-header') }}>#</th>
                 <th className="px-3 py-4 text-left text-[10px] font-black uppercase tracking-widest" style={{ color: v('text-table-header') }}>Video</th>
@@ -1424,16 +1495,10 @@ function ChannelDetail({ profile, loading, filteredVideos, paginatedVideos,
                   {expandedVideoId === video.id && (
                     <VideoDrillDown
                       video={video}
-                      channelId={selectedChannel?.id}
                       dailyCache={dailyCache}
                       dailyLoading={dailyLoading}
-                      fetchDailyData={fetchDailyData}
                       expandedMetric={expandedMetric}
                       setExpandedMetric={setExpandedMetric}
-                      expandedDateFrom={expandedDateFrom}
-                      setExpandedDateFrom={setExpandedDateFrom}
-                      expandedDateTo={expandedDateTo}
-                      setExpandedDateTo={setExpandedDateTo}
                       colSpan={totalCols}
                       formatNumber={formatNumber}
                       formatAvd={formatAvd}
