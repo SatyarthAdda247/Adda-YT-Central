@@ -4,6 +4,7 @@ backend/tokens.json
 backend/*service_account*.json
 backend/*servcie_account*.json
 backend/backfill_progress.json
+backend/daterange_progress.json
 backend/failed_dates.log
 
 .env
@@ -13,6 +14,7 @@ backend/failed_dates.log
 backend/*.csv
 backend/bq_pipeline.py
 backend/bq_create_tables.sql
+backend/update_channel_sheet.py
 
 # Python
 __pycache__/
