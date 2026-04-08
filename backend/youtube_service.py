@@ -9,7 +9,7 @@ from google.cloud import bigquery
 BQ_PROJECT    = "adda247-dev"
 BQ_DATASET    = "yt_central_mind"
 TABLE_CHANNEL = f"{BQ_PROJECT}.{BQ_DATASET}.channel_daily_snapshot"
-TABLE_VIDEO   = f"{BQ_PROJECT}.{BQ_DATASET}.video_analytics_daily"
+TABLE_VIDEO   = f"{BQ_PROJECT}.{BQ_DATASET}.video_analytics_daily_v2"
 SA_PATH       = Path(__file__).parent / "servcie_account_adda247-dev.json"
 
 def get_bq_client():
@@ -163,7 +163,7 @@ def get_bq_videos(channel_id: str):
                 video_title,
                 video_type,
                 published_at,
-                MAX(teacher_name)                       AS teacher_name,
+                MAX(duration)                           AS duration,
                 SUM(views)                              AS views,
                 ROUND(SUM(watch_time_minutes) / 60, 2)  AS watch_time_hrs,
                 CAST(AVG(avg_view_duration_sec) AS INT64) AS avd,
@@ -192,7 +192,7 @@ def get_bq_videos(channel_id: str):
                     "title":         row.video_title,
                     "videoType":     row.video_type,
                     "publishedAt":   row.published_at.isoformat() if row.published_at else None,
-                    "teacherName":   row.teacher_name or None,
+                    "duration":      row.duration or None,
                     "views":         row.views or 0,
                     "watchTimeHrs":  float(row.watch_time_hrs or 0),
                     "avd":           row.avd or 0,
@@ -274,7 +274,7 @@ def get_bq_video_daily(video_id: str, channel_id: str, start: str, end: str):
 
 
 @youtube_router.get("/bq-faculty")
-def get_bq_faculty():
+def get_bq_faculty():  # noqa — teacher_name not yet in v2, returns empty until mapping is run
     """
     Returns cumulative stats per teacher across all channels and all time.
     Grouped by teacher_name from video_analytics_daily.
@@ -327,3 +327,71 @@ def get_bq_faculty():
         }
 
     return get_cached("bq-faculty", CACHE_TTL_BQ_VIDEOS, fetch)
+
+
+@youtube_router.get("/bq-faculty-videos/{teacher_name}")
+def get_bq_faculty_videos(teacher_name: str):
+    """
+    Returns all videos by a teacher grouped by channel.
+    Cached per teacher — only loads when someone clicks that teacher.
+    Clustering on teacher_name makes this near-free in BQ.
+    """
+    def fetch():
+        bq = get_bq_client()
+        query = f"""
+            SELECT
+                channel_id,
+                channel_name,
+                video_id,
+                video_title,
+                video_type,
+                published_at,
+                MAX(teacher_name)                       AS teacher_name,
+                SUM(views)                              AS views,
+                ROUND(SUM(watch_time_minutes) / 60, 2)  AS watch_time_hrs,
+                CAST(AVG(avg_view_duration_sec) AS INT64) AS avd,
+                SUM(subs_gained)                        AS subs_gained,
+                SUM(subs_lost)                          AS subs_lost,
+                SUM(net_subs)                           AS net_subs,
+                SUM(likes)                              AS likes,
+                SUM(comments)                           AS comments,
+                SUM(shares)                             AS shares
+            FROM `{TABLE_VIDEO}`
+            WHERE teacher_name = @teacher_name
+            GROUP BY channel_id, channel_name, video_id, video_title, video_type, published_at
+            ORDER BY channel_name, views DESC
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("teacher_name", "STRING", teacher_name),
+            ]
+        )
+        rows = list(bq.query(query, job_config=job_config).result())
+
+        # Group by channel in Python — zero extra BQ cost
+        channels = {}
+        for row in rows:
+            cname = row.channel_name or "Unknown"
+            if cname not in channels:
+                channels[cname] = {"channelId": row.channel_id, "channelName": cname, "videos": []}
+            channels[cname]["videos"].append({
+                "id":           row.video_id,
+                "title":        row.video_title,
+                "videoType":    row.video_type,
+                "publishedAt":  row.published_at.isoformat() if row.published_at else None,
+                "views":        row.views or 0,
+                "watchTimeHrs": float(row.watch_time_hrs or 0),
+                "avd":          row.avd or 0,
+                "subsGained":   row.subs_gained or 0,
+                "subsLost":     row.subs_lost or 0,
+                "netSubs":      row.net_subs or 0,
+                "likes":        row.likes or 0,
+                "comments":     row.comments or 0,
+                "shares":       row.shares or 0,
+                "convRatio":    round(((row.net_subs or 0) / row.views) * 100, 2) if (row.views or 0) > 0 else 0,
+            })
+
+        return {"teacher": teacher_name, "channels": list(channels.values())}
+
+    cache_key = f"bq-faculty-videos:{teacher_name}"
+    return get_cached(cache_key, CACHE_TTL_BQ_VIDEOS, fetch)
