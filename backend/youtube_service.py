@@ -283,6 +283,121 @@ def get_bq_video_daily(video_id: str, channel_id: str, start: str, end: str):
     return get_cached(f"bq-video-daily:{video_id}:{start}:{end}", CACHE_TTL_BQ_VIDEOS, fetch)
 
 
+TABLE_CHANNEL_ANALYTICS  = f"{BQ_PROJECT}.{BQ_DATASET}.channel_analytics_daily"
+TABLE_CHANNEL_REALTIME   = f"{BQ_PROJECT}.{BQ_DATASET}.channel_nearrealtime_snapshot"
+
+
+@youtube_router.get("/channel-analytics/{channel_id}")
+def get_channel_analytics(channel_id: str, start: str = "2026-01-07", end: str = None):
+    """
+    Returns D-2 channel-level daily metrics from channel_analytics_daily.
+    Accurate, no top-200 limit — sourced from Analytics API.
+    """
+    from datetime import timedelta
+    if end is None:
+        end = (datetime.utcnow().date() - timedelta(days=2)).strftime("%Y-%m-%d")
+
+    def fetch():
+        bq = get_bq_client()
+        query = f"""
+            SELECT
+                date,
+                views,
+                estimated_minutes_watched,
+                ROUND(estimated_minutes_watched / 60.0, 2)  AS watch_time_hrs,
+                average_view_duration,
+                average_view_percentage,
+                likes,
+                comments,
+                shares,
+                subscribers_gained,
+                subscribers_lost,
+                (subscribers_gained - subscribers_lost)      AS net_subs,
+                impressions,
+                impression_ctr
+            FROM `{TABLE_CHANNEL_ANALYTICS}`
+            WHERE channel_id = @channel_id
+              AND date BETWEEN @start AND @end
+            ORDER BY date ASC
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("channel_id", "STRING", channel_id),
+                bigquery.ScalarQueryParameter("start",      "DATE",   start),
+                bigquery.ScalarQueryParameter("end",        "DATE",   end),
+            ]
+        )
+        rows = list(bq.query(query, job_config=job_config).result())
+        return {
+            "channel_id": channel_id,
+            "source":     "channel_analytics_daily · Analytics API · D-2",
+            "daily": [
+                {
+                    "date":                 row.date.isoformat(),
+                    "views":                row.views or 0,
+                    "watchTimeHrs":         float(row.watch_time_hrs or 0),
+                    "avgViewDuration":      float(row.average_view_duration or 0),
+                    "avgViewPercentage":    float(row.average_view_percentage or 0),
+                    "likes":                row.likes or 0,
+                    "comments":             row.comments or 0,
+                    "shares":               row.shares or 0,
+                    "subscribersGained":    row.subscribers_gained or 0,
+                    "subscribersLost":      row.subscribers_lost or 0,
+                    "netSubs":              row.net_subs or 0,
+                    "impressions":          None,   # not available in contentOwner mode
+                    "impressionCtr":        None,
+                }
+                for row in rows
+            ]
+        }
+
+    return get_cached(f"ch-analytics:{channel_id}:{start}:{end}", 3600, fetch)
+
+
+@youtube_router.get("/channel-realtime/{channel_id}")
+def get_channel_realtime(channel_id: str):
+    """
+    Returns the latest realtime snapshot for a channel from channel_nearrealtime_snapshot.
+    Data API v3 — near real-time, updated every few hours.
+    """
+    def fetch():
+        bq = get_bq_client()
+        query = f"""
+            SELECT
+                fetched_at,
+                channel_name,
+                subscribers,
+                total_views,
+                total_videos
+            FROM `{TABLE_CHANNEL_REALTIME}`
+            WHERE channel_id = @channel_id
+            ORDER BY fetched_at DESC
+            LIMIT 1
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("channel_id", "STRING", channel_id),
+            ]
+        )
+        rows = list(bq.query(query, job_config=job_config).result())
+        if not rows:
+            return {"channel_id": channel_id, "snapshot": None}
+        row = rows[0]
+        return {
+            "channel_id": channel_id,
+            "source":     "channel_nearrealtime_snapshot · Data API v3 · ~minutes lag",
+            "snapshot": {
+                "fetchedAt":   row.fetched_at.isoformat() if row.fetched_at else None,
+                "channelName": row.channel_name,
+                "subscribers": row.subscribers or 0,
+                "totalViews":  row.total_views or 0,
+                "totalVideos": row.total_videos or 0,
+            }
+        }
+
+    return get_cached(f"ch-realtime:{channel_id}", 900, fetch)  # 15 min cache
+
+
 @youtube_router.get("/bq-faculty")
 def get_bq_faculty():  # noqa — teacher_name not yet in v2, returns empty until mapping is run
     """
