@@ -190,7 +190,7 @@ function App() {
   }, [dark]);
 
   // Top-level tab
-  const [mainTab, setMainTab] = useState('business');
+  const [mainTab, setMainTab] = useState('channel');
 
   // Business drill-down
   const [businessView, setBusinessView] = useState('list');
@@ -206,6 +206,12 @@ function App() {
   const [visibleExtraCols, setVisibleExtraCols] = useState([]);
   const [showColPicker, setShowColPicker] = useState(false);
   const toggleExtraCol = (id) => setVisibleExtraCols(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
+  const [explorerSortCol, setExplorerSortCol] = useState('subscribers');
+  const [explorerSortDir, setExplorerSortDir] = useState('desc');
+  const handleExplorerSort = (col) => {
+    if (explorerSortCol === col) setExplorerSortDir(d => d === 'desc' ? 'asc' : 'desc');
+    else { setExplorerSortCol(col); setExplorerSortDir('desc'); }
+  };
 
   // Channel explorer inline expand
   const [expandedExplorerChannel, setExpandedExplorerChannel] = useState(null);
@@ -255,10 +261,22 @@ function App() {
   const [facultyLoading, setFacultyLoading] = useState(false);
   const [facultySearch, setFacultySearch] = useState('');
   const [facultySortBy, setFacultySortBy] = useState('totalViews');
+  const [facultySortDir, setFacultySortDir] = useState('desc');
   const [expandedTeacher, setExpandedTeacher] = useState(null);
   const [teacherVideos, setTeacherVideos] = useState({});
   const [teacherVideosLoading, setTeacherVideosLoading] = useState(false);
   const [channelVideoLimit, setChannelVideoLimit] = useState({});  // { "teacherName:channelName": limit }
+  const [channelVideoSort, setChannelVideoSort] = useState({});   // { "teacherName:channelName": { col, dir } }
+  const [facultyMetricCols, setFacultyMetricCols] = useState(['totalChannels','totalVideos','totalViews','totalNetSubs']);
+  const [showFacultyMetricPicker, setShowFacultyMetricPicker] = useState(false);
+  const facultyMetricPickerRef = useRef(null);
+
+  useEffect(() => {
+    if (!showFacultyMetricPicker) return;
+    const handler = e => { if (facultyMetricPickerRef.current && !facultyMetricPickerRef.current.contains(e.target)) setShowFacultyMetricPicker(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showFacultyMetricPicker]);
 
   useEffect(() => {
     if (mainTab === 'teacher' && faculty.length === 0) {
@@ -312,6 +330,12 @@ function App() {
 
   // Per-expanded-video state
   const [expandedMetric, setExpandedMetric] = useState('views');
+  const [videoSortCol, setVideoSortCol] = useState('publishedAt');
+  const [videoSortDir, setVideoSortDir] = useState('desc');
+  const handleVideoSort = (col) => {
+    if (videoSortCol === col) setVideoSortDir(d => d === 'desc' ? 'asc' : 'desc');
+    else { setVideoSortCol(col); setVideoSortDir('desc'); }
+  };
 
   // Collect all channels for the Channel tab
   const allChannels = [];
@@ -506,10 +530,54 @@ function App() {
       if (pubDateTo && pub > new Date(pubDateTo)) return false;
       return true;
     })
-    .sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
+    .sort((a, b) => {
+      let av = a[videoSortCol], bv = b[videoSortCol];
+      if (videoSortCol === 'publishedAt') { av = new Date(av || 0); bv = new Date(bv || 0); }
+      else { av = av || 0; bv = bv || 0; }
+      return videoSortDir === 'desc' ? (bv > av ? 1 : -1) : (av > bv ? 1 : -1);
+    });
   const totalPages = Math.ceil(filteredVideos.length / videosPerPage);
   const paginatedVideos = filteredVideos.slice((currentPage - 1) * videosPerPage, currentPage * videosPerPage);
   const isChannelDetailView = businessView === 'channel-detail' || mainTab === 'channel-detail-standalone';
+
+  // Faculty derived (kept outside JSX to avoid recompute on every render)
+  const ALL_FACULTY_METRICS = [
+    { id: 'totalChannels',    label: 'Channels' },
+    { id: 'totalVideos',      label: 'Videos' },
+    { id: 'totalViews',       label: 'Total Views' },
+    { id: 'totalWatchHrs',    label: 'Watch Time' },
+    { id: 'avgViewsPerVideo', label: 'Avg Views/Video' },
+    { id: 'avgAvd',           label: 'AVD' },
+    { id: 'totalNetSubs',     label: 'Net Subs' },
+    { id: 'totalLikes',       label: 'Likes' },
+    { id: 'totalComments',    label: 'Comments' },
+  ];
+  const facultyVisibleMetrics = ALL_FACULTY_METRICS.filter(m => facultyMetricCols.includes(m.id));
+  const facultyTotalCols = 2 + facultyVisibleMetrics.length;
+  const sortedFaculty = [...faculty]
+    .filter(f => !facultySearch || f.name.toLowerCase().includes(facultySearch.toLowerCase()))
+    .sort((a, b) => {
+      const av = a[facultySortBy] || 0, bv = b[facultySortBy] || 0;
+      return facultySortDir === 'desc' ? bv - av : av - bv;
+    });
+  const handleFacultySort = (col) => {
+    if (facultySortBy === col) setFacultySortDir(d => d === 'desc' ? 'asc' : 'desc');
+    else { setFacultySortBy(col); setFacultySortDir('desc'); }
+  };
+  const renderFacultyCell = (f, metricId) => {
+    switch (metricId) {
+      case 'totalChannels':    return <td key={metricId} className="px-5 py-4 text-center text-[14px] font-bold" style={{ color: v('text-body') }}>{f.totalChannels}</td>;
+      case 'totalVideos':      return <td key={metricId} className="px-5 py-4 text-center text-[14px] font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalVideos)}</td>;
+      case 'totalViews':       return <td key={metricId} className="px-5 py-4 text-center text-[15px] font-black" style={{ color: v('accent') }}>{formatNumber(f.totalViews)}</td>;
+      case 'totalWatchHrs':    return <td key={metricId} className="px-5 py-4 text-center text-[14px] font-bold" style={{ color: v('text-body') }}>{formatHours(f.totalWatchHrs)}</td>;
+      case 'avgViewsPerVideo': return <td key={metricId} className="px-5 py-4 text-center text-[14px] font-bold" style={{ color: v('text-body') }}>{formatNumber(f.avgViewsPerVideo)}</td>;
+      case 'avgAvd':           return <td key={metricId} className="px-5 py-4 text-center text-[14px] font-bold" style={{ color: v('text-body') }}>{formatAvd(f.avgAvd)}</td>;
+      case 'totalNetSubs':     return <td key={metricId} className="px-5 py-4 text-center"><span className={`text-[14px] font-black ${f.totalNetSubs >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>{f.totalNetSubs >= 0 ? '+' : ''}{formatNumber(f.totalNetSubs)}</span></td>;
+      case 'totalLikes':       return <td key={metricId} className="px-5 py-4 text-center text-[14px] font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalLikes)}</td>;
+      case 'totalComments':    return <td key={metricId} className="px-5 py-4 text-center text-[14px] font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalComments)}</td>;
+      default: return <td key={metricId} />;
+    }
+  };
 
   // ============================================================
   // RENDER
@@ -670,6 +738,7 @@ function App() {
                 onVideoRowClick={handleVideoRowClick}
                 setCurrentPage={setCurrentPage} setShowConfig={setShowConfig}
                 toggleColumn={toggleColumn} toggleVideoType={toggleVideoType}
+                videoSortCol={videoSortCol} videoSortDir={videoSortDir} onVideoSort={handleVideoSort}
                 formatNumber={formatNumber} formatAvd={formatAvd} />
             )}
           </>
@@ -684,7 +753,7 @@ function App() {
               <div>
                 <h2 className="text-xl font-extrabold tracking-tight" style={{ color: v('text-heading') }}>Channel Explorer</h2>
                 <p className="text-xs font-semibold mt-0.5" style={{ color: v('text-label') }}>
-                  {bqChannels.length > 0 ? `${bqChannels.filter(ch => ch.channel_name.toLowerCase().includes(channelSearch.toLowerCase())).length} of ${bqChannels.length} channels · sorted by subscribers` : 'Live data from BigQuery'}
+                  {bqChannels.length > 0 ? `${bqChannels.filter(ch => ch.channel_name.toLowerCase().includes(channelSearch.toLowerCase())).length} of ${bqChannels.length} channels` : 'Live data from BigQuery'}
                 </p>
               </div>
               <div className="flex items-center gap-3">
@@ -735,9 +804,12 @@ function App() {
 
             {/* Table */}
             {!bqLoading && (() => {
-              const filtered = bqChannels.filter(ch =>
-                ch.channel_name.toLowerCase().includes(channelSearch.toLowerCase())
-              );
+              const filtered = bqChannels
+                .filter(ch => ch.channel_name.toLowerCase().includes(channelSearch.toLowerCase()))
+                .sort((a, b) => {
+                  const av = a[explorerSortCol] || 0, bv = b[explorerSortCol] || 0;
+                  return explorerSortDir === 'desc' ? bv - av : av - bv;
+                });
               return (
                 <div className="overflow-x-auto">
                   <table className="w-full">
@@ -745,10 +817,27 @@ function App() {
                       <tr style={{ backgroundColor: v('bg-table-header') }}>
                         <th className="px-5 py-3.5 text-left text-[10px] font-black uppercase tracking-widest w-12" style={{ color: v('text-table-header') }}>#</th>
                         <th className="px-5 py-3.5 text-left text-[10px] font-black uppercase tracking-widest" style={{ color: v('text-table-header'), minWidth: '220px' }}>Channel</th>
-                        {/* Always-on BQ columns */}
-                        <th className="px-5 py-3.5 text-right text-[10px] font-black uppercase tracking-widest" style={{ color: v('text-table-header') }}>Subscribers</th>
-                        <th className="px-5 py-3.5 text-right text-[10px] font-black uppercase tracking-widest" style={{ color: v('text-table-header') }}>Total Views</th>
-                        <th className="px-5 py-3.5 text-right text-[10px] font-black uppercase tracking-widest" style={{ color: v('text-table-header') }}>Videos</th>
+                        {/* Sortable BQ columns */}
+                        {[
+                          { col: 'subscribers',  label: 'Subscribers' },
+                          { col: 'total_views',  label: 'Total Views' },
+                          { col: 'total_videos', label: 'Videos' },
+                        ].map(({ col, label }) => {
+                          const active = explorerSortCol === col;
+                          return (
+                            <th key={col} className="px-5 py-3.5 text-right text-[10px] font-black uppercase tracking-widest cursor-pointer select-none"
+                              style={{ color: active ? v('accent') : v('text-table-header') }}
+                              onClick={() => handleExplorerSort(col)}>
+                              <span className="inline-flex items-center justify-end gap-1.5">
+                                {label}
+                                <span className="inline-flex items-center justify-center rounded px-1 text-[10px] font-black"
+                                  style={{ backgroundColor: active ? v('accent') : 'rgba(99,102,241,0.18)', color: active ? '#fff' : v('accent') }}>
+                                  {active ? (explorerSortDir === 'desc' ? '↓' : '↑') : '⇅'}
+                                </span>
+                              </span>
+                            </th>
+                          );
+                        })}
                         {/* Toggled extra columns */}
                         {visibleExtraCols.map(id => {
                           const col = CHANNEL_EXTRA_COLS.find(c => c.id === id);
@@ -1027,24 +1116,49 @@ function App() {
               </div>
             </div>
 
-            {/* Sort tabs */}
-            <div className="flex flex-wrap gap-2">
-              {[
-                { id: 'totalViews', label: 'Views' },
-                { id: 'totalWatchHrs', label: 'Watch Time' },
-                { id: 'avgViewsPerVideo', label: 'Avg Views/Video' },
-                { id: 'totalNetSubs', label: 'Net Subs' },
-                { id: 'totalVideos', label: 'Videos' },
-              ].map(s => (
-                <button key={s.id} onClick={() => setFacultySortBy(s.id)}
-                  className="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider border transition-all"
-                  style={{
-                    backgroundColor: facultySortBy === s.id ? v('accent') : 'transparent',
-                    color: facultySortBy === s.id ? '#fff' : v('text-secondary'),
-                    borderColor: facultySortBy === s.id ? v('accent') : v('border-card'),
-                  }}>{s.label}</button>
-              ))}
-            </div>
+            {/* Metric column picker */}
+            {(() => {
+              return (
+                <div className="flex justify-end">
+                  <div className="relative" ref={facultyMetricPickerRef}>
+                    <button onClick={() => setShowFacultyMetricPicker(p => !p)}
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-wider border transition-all"
+                      style={{ backgroundColor: showFacultyMetricPicker ? v('accent') : v('bg-card'), color: showFacultyMetricPicker ? '#fff' : v('accent'), borderColor: v('accent') }}>
+                      <span>Columns</span>
+                      <span style={{ fontSize: 13 }}>{showFacultyMetricPicker ? '▲' : '▼'}</span>
+                    </button>
+                    {showFacultyMetricPicker && (
+                      <div className="absolute right-0 top-full mt-2 rounded-xl border shadow-xl z-50 overflow-hidden"
+                        style={{ backgroundColor: v('bg-card'), borderColor: v('border-card'), minWidth: 200 }}>
+                        <div className="px-3 py-2 border-b text-[9px] font-black uppercase tracking-widest" style={{ borderColor: v('border-light'), color: v('text-label') }}>
+                          Toggle columns
+                        </div>
+                        <div className="p-2 space-y-0.5 max-h-64 overflow-y-auto">
+                          {ALL_FACULTY_METRICS.map(m => {
+                            const checked = facultyMetricCols.includes(m.id);
+                            return (
+                              <label key={m.id} className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg cursor-pointer transition-all"
+                                style={{ backgroundColor: checked ? v('accent-soft') : 'transparent' }}
+                                onMouseEnter={e => { if (!checked) e.currentTarget.style.backgroundColor = v('bg-table-row-hover'); }}
+                                onMouseLeave={e => { e.currentTarget.style.backgroundColor = checked ? v('accent-soft') : 'transparent'; }}>
+                                <div className="w-3.5 h-3.5 rounded flex items-center justify-center shrink-0 border transition-all"
+                                  style={{ backgroundColor: checked ? v('accent') : 'transparent', borderColor: checked ? v('accent') : v('border-card') }}>
+                                  {checked && <span className="text-white font-black" style={{ fontSize: 9, lineHeight: 1 }}>✓</span>}
+                                </div>
+                                <input type="checkbox" className="hidden" checked={checked} onChange={() => {
+                                  setFacultyMetricCols(prev => checked ? prev.filter(x => x !== m.id) : [...prev, m.id]);
+                                }} />
+                                <span className="text-[11px] font-bold" style={{ color: checked ? v('accent') : v('text-body') }}>{m.label}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Leaderboard table */}
             <div className="rounded-2xl overflow-hidden border" style={{ backgroundColor: v('bg-card'), borderColor: v('border-card'), boxShadow: v('card-shadow') }}>
@@ -1056,29 +1170,29 @@ function App() {
                 <table className="w-full text-[12px]">
                   <thead>
                     <tr style={{ backgroundColor: v('bg-table-header') }}>
-                      {[
-                        { label: '#', center: true },
-                        { label: 'Faculty', center: false },
-                        { label: 'Channels', center: true },
-                        { label: 'Videos', center: true },
-                        { label: 'Total Views', center: true },
-                        { label: 'Watch Time', center: true },
-                        { label: 'Avg Views/Video', center: true },
-                        { label: 'AVD', center: true },
-                        { label: 'Net Subs', center: true },
-                        { label: 'Likes', center: true },
-                        { label: 'Comments', center: true },
-                      ].map(h => (
-                        <th key={h.label} className={`px-4 py-3 text-[10px] font-black uppercase tracking-widest ${h.center ? 'text-center' : 'text-left'}`}
-                          style={{ color: v('text-table-header') }}>{h.label}</th>
-                      ))}
+                      <th className="px-5 py-4 text-[11px] font-black uppercase tracking-widest text-center w-16" style={{ color: v('text-table-header') }}>#</th>
+                      <th className="px-5 py-4 text-[11px] font-black uppercase tracking-widest text-left" style={{ color: v('text-table-header') }}>Faculty</th>
+                      {facultyVisibleMetrics.map(m => {
+                        const active = facultySortBy === m.id;
+                        return (
+                          <th key={m.id}
+                            className="px-5 py-4 text-[11px] font-black uppercase tracking-widest text-center cursor-pointer select-none"
+                            style={{ color: active ? v('accent') : v('text-table-header') }}
+                            onClick={() => handleFacultySort(m.id)}>
+                            <span className="inline-flex items-center justify-center gap-1.5">
+                              {m.label}
+                              <span className="inline-flex items-center justify-center rounded px-1 text-[10px] font-black transition-all"
+                                style={{ backgroundColor: active ? v('accent') : 'rgba(99,102,241,0.18)', color: active ? '#fff' : v('accent') }}>
+                                {active ? (facultySortDir === 'desc' ? '↓' : '↑') : '⇅'}
+                              </span>
+                            </span>
+                          </th>
+                        );
+                      })}
                     </tr>
                   </thead>
                   <tbody>
-                    {faculty
-                      .filter(f => !facultySearch || f.name.toLowerCase().includes(facultySearch.toLowerCase()))
-                      .sort((a, b) => (b[facultySortBy] || 0) - (a[facultySortBy] || 0))
-                      .map((f, idx) => (
+                    {sortedFaculty.map((f, idx) => ( // eslint-disable-line no-shadow
                         <>
                           <tr key={f.name} onClick={() => {
                               if (expandedTeacher === f.name) { setExpandedTeacher(null); return; }
@@ -1095,37 +1209,25 @@ function App() {
                             style={{ borderColor: v('border-table'), backgroundColor: expandedTeacher === f.name ? v('bg-row-expanded') : 'transparent' }}
                             onMouseEnter={e => { if (expandedTeacher !== f.name) e.currentTarget.style.backgroundColor = v('bg-table-row-hover'); }}
                             onMouseLeave={e => { e.currentTarget.style.backgroundColor = expandedTeacher === f.name ? v('bg-row-expanded') : 'transparent'; }}>
-                            <td className="px-4 py-3 text-center">
-                              {idx === 0 ? <span className="text-lg">🥇</span>
-                                : idx === 1 ? <span className="text-lg">🥈</span>
-                                : idx === 2 ? <span className="text-lg">🥉</span>
-                                : <span className="font-black text-[11px]" style={{ color: v('text-label') }}>{idx + 1}</span>}
+                            <td className="px-5 py-4 text-center">
+                              {idx === 0 ? <span className="text-xl">🥇</span>
+                                : idx === 1 ? <span className="text-xl">🥈</span>
+                                : idx === 2 ? <span className="text-xl">🥉</span>
+                                : <span className="font-black text-[13px]" style={{ color: v('text-label') }}>{idx + 1}</span>}
                             </td>
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-2">
-                                <ChevronRight size={13} className="transition-transform shrink-0"
+                            <td className="px-5 py-4">
+                              <div className="flex items-center gap-3">
+                                <ChevronRight size={15} className="transition-transform shrink-0"
                                   style={{ color: v('accent'), transform: expandedTeacher === f.name ? 'rotate(90deg)' : 'rotate(0deg)' }} />
-                                <p className="font-black text-[12px]" style={{ color: expandedTeacher === f.name ? v('accent') : v('text-heading') }}>{f.name}</p>
+                                <p className="font-black text-[15px]" style={{ color: expandedTeacher === f.name ? v('accent') : v('text-heading') }}>{f.name}</p>
                               </div>
                             </td>
-                            <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{f.totalChannels}</td>
-                            <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalVideos)}</td>
-                            <td className="px-4 py-3 text-center font-black" style={{ color: v('accent') }}>{formatNumber(f.totalViews)}</td>
-                            <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatHours(f.totalWatchHrs)}</td>
-                            <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.avgViewsPerVideo)}</td>
-                            <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatAvd(f.avgAvd)}</td>
-                            <td className="px-4 py-3 text-center">
-                              <span className={`font-black ${f.totalNetSubs >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                                {f.totalNetSubs >= 0 ? '+' : ''}{formatNumber(f.totalNetSubs)}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalLikes)}</td>
-                            <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalComments)}</td>
+                            {facultyVisibleMetrics.map(m => renderFacultyCell(f, m.id))}
                           </tr>
                           {/* Expanded teacher drill-down */}
                           {expandedTeacher === f.name && (
                             <tr key={`${f.name}-expanded`}>
-                              <td colSpan={11} className="p-0">
+                              <td colSpan={facultyTotalCols} className="p-0">
                                 <div className="mx-4 mb-4 mt-1 rounded-2xl overflow-hidden border-l-4"
                                   style={{ borderLeftColor: v('accent'), backgroundColor: v('bg-expanded'), border: `1px solid ${v('border-card')}`, borderLeftWidth: '4px' }}>
                                   {/* Header */}
@@ -1160,14 +1262,60 @@ function App() {
                                           <table className="w-full text-[11px]">
                                             <thead>
                                               <tr style={{ backgroundColor: v('bg-daily-header') }}>
-                                                {['Video', 'Type', 'Published', 'Views', 'Watch Time', 'AVD', 'Net Subs', 'Likes'].map((h, i) => (
-                                                  <th key={h} className={`px-3 py-2 text-[9px] font-black uppercase tracking-wider ${i === 0 ? 'text-left' : 'text-center'}`}
-                                                    style={{ color: v('text-table-header') }}>{h}</th>
-                                                ))}
+                                                {[
+                                                  { label: 'Video',      col: null,           left: true },
+                                                  { label: 'Type',       col: null,           left: false },
+                                                  { label: 'Published',  col: 'publishedAt',  left: false },
+                                                  { label: 'Views',      col: 'views',        left: false },
+                                                  { label: 'Watch Time', col: 'watchTimeHrs', left: false },
+                                                  { label: 'AVD',        col: 'avd',          left: false },
+                                                  { label: 'Net Subs',   col: 'netSubs',      left: false },
+                                                  { label: 'Likes',      col: 'likes',        left: false },
+                                                ].map(({ label, col, left }) => {
+                                                  const sortKey = `${f.name}:${ch.channelName}`;
+                                                  const active = channelVideoSort[sortKey]?.col === col && col !== null;
+                                                  const dir = channelVideoSort[sortKey]?.dir || 'desc';
+                                                  return (
+                                                    <th key={label}
+                                                      className={`px-3 py-2 text-[9px] font-black uppercase tracking-wider ${left ? 'text-left' : 'text-center'} ${col ? 'cursor-pointer select-none group' : ''}`}
+                                                      style={{ color: active ? v('accent') : v('text-table-header') }}
+                                                      onClick={() => {
+                                                        if (!col) return;
+                                                        setChannelVideoSort(prev => {
+                                                          const cur = prev[sortKey];
+                                                          const newDir = cur?.col === col ? (cur.dir === 'desc' ? 'asc' : 'desc') : 'desc';
+                                                          return { ...prev, [sortKey]: { col, dir: newDir } };
+                                                        });
+                                                        setChannelVideoLimit(prev => ({ ...prev, [sortKey]: 10 }));
+                                                      }}>
+                                                      <span className={`inline-flex items-center gap-1 ${!left ? 'justify-center' : ''} ${col && !active ? 'group-hover:opacity-80' : ''}`}>
+                                                        {label}
+                                                        {col && (
+                                                          <span className={`inline-flex items-center justify-center rounded px-1 transition-all text-[10px] font-black`}
+                                                            style={{
+                                                              backgroundColor: active ? v('accent') : 'rgba(99,102,241,0.18)',
+                                                              color: active ? '#fff' : v('accent'),
+                                                            }}>
+                                                            {active ? (dir === 'desc' ? '↓' : '↑') : '⇅'}
+                                                          </span>
+                                                        )}
+                                                      </span>
+                                                    </th>
+                                                  );
+                                                })}
                                               </tr>
                                             </thead>
                                             <tbody>
-                                              {ch.videos.slice(0, channelVideoLimit[`${f.name}:${ch.channelName}`] || 10).map((video, vi) => (
+                                              {(() => {
+                                                const sortKey = `${f.name}:${ch.channelName}`;
+                                                const { col = 'publishedAt', dir = 'desc' } = channelVideoSort[sortKey] || {};
+                                                const sorted = [...ch.videos].sort((a, b) => {
+                                                  let av = a[col], bv = b[col];
+                                                  if (col === 'publishedAt') { av = new Date(av || 0); bv = new Date(bv || 0); }
+                                                  else { av = av || 0; bv = bv || 0; }
+                                                  return dir === 'desc' ? (bv > av ? 1 : -1) : (av > bv ? 1 : -1);
+                                                });
+                                                return sorted.slice(0, channelVideoLimit[sortKey] || 10).map((video, vi) => (
                                                 <tr key={video.id}
                                                   style={{ backgroundColor: vi % 2 === 0 ? v('bg-daily-row-even') : v('bg-daily-row-odd') }}>
                                                   <td className="px-3 py-2">
@@ -1201,17 +1349,24 @@ function App() {
                                                   </td>
                                                   <td className="px-3 py-2 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(video.likes)}</td>
                                                 </tr>
-                                              ))}
+                                              ));
+                                              })()}
                                             </tbody>
                                           </table>
-                                          {ch.videos.length > (channelVideoLimit[`${f.name}:${ch.channelName}`] || 10) && (
-                                            <button
-                                              onClick={() => setChannelVideoLimit(prev => ({ ...prev, [`${f.name}:${ch.channelName}`]: (prev[`${f.name}:${ch.channelName}`] || 10) + 10 }))}
-                                              className="w-full py-2.5 text-[10px] font-black uppercase tracking-wider transition-all"
-                                              style={{ backgroundColor: v('bg-expanded-header'), color: v('accent'), borderTop: `1px solid ${v('border-light')}` }}>
-                                              Show more ({ch.videos.length - (channelVideoLimit[`${f.name}:${ch.channelName}`] || 10)} remaining)
-                                            </button>
-                                          )}
+                                          {(() => {
+                                            const sortKey = `${f.name}:${ch.channelName}`;
+                                            const limit = channelVideoLimit[sortKey] || 10;
+                                            const remaining = ch.videos.length - limit;
+                                            if (remaining <= 0) return null;
+                                            return (
+                                              <button
+                                                onClick={() => setChannelVideoLimit(prev => ({ ...prev, [sortKey]: limit + 10 }))}
+                                                className="w-full py-2.5 text-[10px] font-black uppercase tracking-wider transition-all"
+                                                style={{ backgroundColor: v('bg-expanded-header'), color: v('accent'), borderTop: `1px solid ${v('border-light')}` }}>
+                                                Show more ({remaining} remaining)
+                                              </button>
+                                            );
+                                          })()}
                                         </div>
                                       ))}
                                     </div>
@@ -1251,6 +1406,7 @@ function App() {
             onVideoRowClick={handleVideoRowClick}
             setCurrentPage={setCurrentPage} setShowConfig={setShowConfig}
             toggleColumn={toggleColumn} toggleVideoType={toggleVideoType}
+            videoSortCol={videoSortCol} videoSortDir={videoSortDir} onVideoSort={handleVideoSort}
             formatNumber={formatNumber} formatAvd={formatAvd} formatHours={formatHours} />
         )}
 
@@ -1628,6 +1784,7 @@ function ChannelDetail({ profile, loading, videoOnly,
   expandedVideoId, expandedMetric, setExpandedMetric,
   dailyCache, dailyLoading, onVideoRowClick,
   setCurrentPage, setShowConfig, toggleColumn, toggleVideoType,
+  videoSortCol, videoSortDir, onVideoSort,
   formatNumber, formatAvd, formatHours }) {
 
   if (loading) {
@@ -1644,34 +1801,45 @@ function ChannelDetail({ profile, loading, videoOnly,
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Near real-time strip — video-only mode */}
-      {videoOnly && channelRealtime?.snapshot && (
+      {/* Channel identity bar — always shown in video-only mode */}
+      {videoOnly && (
         <div className="rounded-2xl px-6 py-4 flex items-center justify-between flex-wrap gap-4"
           style={{ backgroundColor: v('bg-card'), border: `1px solid ${v('border-card')}`, boxShadow: v('card-shadow') }}>
-          <div className="flex items-center gap-3">
-            {profile.identity.thumbnail_url && (
-              <img src={profile.identity.thumbnail_url} className="w-10 h-10 rounded-xl object-cover border" style={{ borderColor: v('border-card') }} />
-            )}
+          <div className="flex items-center gap-4">
+            {profile.identity.thumbnail_url
+              ? <img src={profile.identity.thumbnail_url} className="w-12 h-12 rounded-xl object-cover border-2 shrink-0" style={{ borderColor: v('accent') }} />
+              : <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: v('accent-soft') }}><MonitorPlay size={20} style={{ color: v('accent') }} /></div>
+            }
             <div>
-              <p className="text-[15px] font-black" style={{ color: v('text-heading') }}>{profile.identity.name}</p>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse inline-block" />
-                <p className="text-[10px] font-semibold" style={{ color: v('text-label') }}>Near Real-Time · {new Date(channelRealtime.snapshot.fetchedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-[17px] font-black" style={{ color: v('text-heading') }}>{profile.identity.name}</p>
+                <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full" style={{ backgroundColor: v('accent-soft'), color: v('accent') }}>Video Level</span>
               </div>
+              {channelRealtime?.snapshot
+                ? <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse inline-block" />
+                    <p className="text-[10px] font-semibold" style={{ color: v('text-label') }}>
+                      Near Real-Time · {new Date(channelRealtime.snapshot.fetchedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                    </p>
+                  </div>
+                : <p className="text-[10px] font-semibold mt-0.5" style={{ color: v('text-label') }}>Video-level performance data</p>
+              }
             </div>
           </div>
-          <div className="flex gap-3 flex-wrap">
-            {[
-              { label: 'Subscribers', val: formatNumber(channelRealtime.snapshot.subscribers), color: '#10b981' },
-              { label: 'Total Views',  val: formatNumber(channelRealtime.snapshot.totalViews),  color: v('accent') },
-              { label: 'Total Videos', val: formatNumber(channelRealtime.snapshot.totalVideos), color: v('text-heading') },
-            ].map(s => (
-              <div key={s.label} className="text-center px-4 py-2 rounded-xl" style={{ backgroundColor: v('bg-input'), border: `1px solid ${v('border-card')}` }}>
-                <p className="text-[9px] font-black uppercase tracking-widest mb-1" style={{ color: v('text-label') }}>{s.label}</p>
-                <p className="text-base font-black" style={{ color: s.color }}>{s.val}</p>
-              </div>
-            ))}
-          </div>
+          {channelRealtime?.snapshot && (
+            <div className="flex gap-3 flex-wrap">
+              {[
+                { label: 'Subscribers', val: formatNumber(channelRealtime.snapshot.subscribers), color: '#10b981' },
+                { label: 'Total Views',  val: formatNumber(channelRealtime.snapshot.totalViews),  color: v('accent') },
+                { label: 'Total Videos', val: formatNumber(channelRealtime.snapshot.totalVideos), color: v('text-heading') },
+              ].map(s => (
+                <div key={s.label} className="text-center px-4 py-2 rounded-xl" style={{ backgroundColor: v('bg-input'), border: `1px solid ${v('border-card')}` }}>
+                  <p className="text-[9px] font-black uppercase tracking-widest mb-1" style={{ color: v('text-label') }}>{s.label}</p>
+                  <p className="text-[15px] font-black" style={{ color: s.color }}>{s.val}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -2049,12 +2217,51 @@ function ChannelDetail({ profile, loading, videoOnly,
             <thead className="sticky top-[56px] z-[50]">
               <tr style={{ backgroundColor: v('bg-table-header') }}>
                 <th className="px-2 py-4 text-left text-[10px] font-black uppercase tracking-widest" style={{ color: v('text-table-header') }}>#</th>
-                <th className="px-3 py-4 text-left text-[10px] font-black uppercase tracking-widest" style={{ color: v('text-table-header') }}>Video</th>
-                {visibleColumns.map(id => (
-                  <th key={id} className="px-2 py-4 text-center text-[10px] font-black uppercase tracking-widest" style={{ color: v('text-table-header') }}>
-                    {ALL_VIDEO_COLUMNS.find(c => c.id === id)?.label}
-                  </th>
-                ))}
+                {/* Video col — sortable by publishedAt */}
+                {(() => {
+                  const active = videoSortCol === 'publishedAt';
+                  return (
+                    <th className="px-3 py-4 text-left text-[10px] font-black uppercase tracking-widest cursor-pointer select-none"
+                      style={{ color: active ? v('accent') : v('text-table-header') }}
+                      onClick={() => onVideoSort && onVideoSort('publishedAt')}>
+                      <span className="inline-flex items-center gap-1.5">
+                        Video
+                        <span className="inline-flex items-center justify-center rounded px-1 text-[10px] font-black"
+                          style={{ backgroundColor: active ? v('accent') : 'rgba(99,102,241,0.18)', color: active ? '#fff' : v('accent') }}>
+                          {active ? (videoSortDir === 'desc' ? '↓' : '↑') : '⇅'}
+                        </span>
+                      </span>
+                    </th>
+                  );
+                })()}
+                {visibleColumns.map(id => {
+                  const colMeta = ALL_VIDEO_COLUMNS.find(c => c.id === id);
+                  // map column id → video object field for sorting
+                  const sortFieldMap = {
+                    views: 'views', watchTime: 'watchTimeHrs', avd: 'avd',
+                    subsGained: 'subsGained', subsLost: 'subsLost', netSubs: 'netSubs',
+                    conv_ratio: 'convRatio', likes: 'likes', comments: 'comments',
+                    sharing: 'shares', engagement: null,
+                  };
+                  const sortField = sortFieldMap[id];
+                  const active = sortField && videoSortCol === sortField;
+                  return (
+                    <th key={id}
+                      className={`px-2 py-4 text-center text-[10px] font-black uppercase tracking-widest ${sortField ? 'cursor-pointer select-none' : ''}`}
+                      style={{ color: active ? v('accent') : v('text-table-header') }}
+                      onClick={() => sortField && onVideoSort && onVideoSort(sortField)}>
+                      <span className="inline-flex items-center justify-center gap-1.5">
+                        {colMeta?.label}
+                        {sortField && (
+                          <span className="inline-flex items-center justify-center rounded px-1 text-[10px] font-black"
+                            style={{ backgroundColor: active ? v('accent') : 'rgba(99,102,241,0.18)', color: active ? '#fff' : v('accent') }}>
+                            {active ? (videoSortDir === 'desc' ? '↓' : '↑') : '⇅'}
+                          </span>
+                        )}
+                      </span>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
