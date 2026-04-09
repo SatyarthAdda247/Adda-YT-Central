@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import {
   Loader2, Sun, Moon,
@@ -207,6 +207,39 @@ function App() {
   const [showColPicker, setShowColPicker] = useState(false);
   const toggleExtraCol = (id) => setVisibleExtraCols(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
 
+  // Channel explorer inline expand
+  const [expandedExplorerChannel, setExpandedExplorerChannel] = useState(null);
+  const [explorerSnapshots, setExplorerSnapshots] = useState({});
+  const [explorerSnapshotLoading, setExplorerSnapshotLoading] = useState({});
+  const [explorerAnalytics, setExplorerAnalytics] = useState({});   // { channel_id: daily[] }
+  const [explorerAnalyticsLoading, setExplorerAnalyticsLoading] = useState({});
+  const [explorerMode, setExplorerMode] = useState({});             // { channel_id: 'd2'|'realtime' }
+
+  const handleExplorerRowClick = (ch) => {
+    if (expandedExplorerChannel === ch.channel_id) {
+      setExpandedExplorerChannel(null);
+      return;
+    }
+    setExpandedExplorerChannel(ch.channel_id);
+    // default to realtime
+    setExplorerMode(prev => ({ ...prev, [ch.channel_id]: prev[ch.channel_id] || 'realtime' }));
+
+    if (!explorerSnapshots[ch.channel_id]) {
+      setExplorerSnapshotLoading(prev => ({ ...prev, [ch.channel_id]: true }));
+      axios.get(`${API_BASE_URL}/yt/channel-realtime/${ch.channel_id}`)
+        .then(res => setExplorerSnapshots(prev => ({ ...prev, [ch.channel_id]: res.data.snapshot })))
+        .catch(() => {})
+        .finally(() => setExplorerSnapshotLoading(prev => ({ ...prev, [ch.channel_id]: false })));
+    }
+    if (!explorerAnalytics[ch.channel_id]) {
+      setExplorerAnalyticsLoading(prev => ({ ...prev, [ch.channel_id]: true }));
+      axios.get(`${API_BASE_URL}/yt/channel-analytics/${ch.channel_id}`)
+        .then(res => setExplorerAnalytics(prev => ({ ...prev, [ch.channel_id]: res.data.daily || [] })))
+        .catch(() => {})
+        .finally(() => setExplorerAnalyticsLoading(prev => ({ ...prev, [ch.channel_id]: false })));
+    }
+  };
+
   useEffect(() => {
     if (mainTab === 'channel' && bqChannels.length === 0) {
       setBqLoading(true);
@@ -236,6 +269,22 @@ function App() {
         .finally(() => setFacultyLoading(false));
     }
   }, [mainTab]);
+
+  // Channel analytics mode (for channel detail view)
+  const [channelAnalytics, setChannelAnalytics] = useState(null);
+  const [channelRealtime, setChannelRealtime] = useState(null);
+  const [channelAnalyticsLoading, setChannelAnalyticsLoading] = useState(false);
+  const [channelDataMode, setChannelDataMode] = useState('realtime'); // 'd2' | 'realtime'
+  const [channelVideoOnly, setChannelVideoOnly] = useState(false);
+
+  // D-2 day-wise table controls
+  const [channelMetricCols, setChannelMetricCols] = useState(['views', 'watchTimeHrs', 'netSubs', 'likes']);
+  const [channelDailyDateFrom, setChannelDailyDateFrom] = useState('');
+  const [channelDailyDateTo, setChannelDailyDateTo] = useState('');
+  const [showChannelMetricPicker, setShowChannelMetricPicker] = useState(false);
+  const toggleChannelMetric = (id) => setChannelMetricCols(prev =>
+    prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]
+  );
 
   // Channel detail state
   const days = 30;
@@ -305,10 +354,32 @@ function App() {
     fetchData(channel.id);
   };
 
-  const handleChannelTabClick = (channel) => {
+  const handleChannelTabClick = (channel, videoOnly = false) => {
     setSelectedChannel(channel);
     setMainTab('channel-detail-standalone');
+    setChannelVideoOnly(videoOnly);
+    setChannelAnalytics(null);
+    setChannelRealtime(null);
+    setChannelDataMode('realtime');
     fetchData(channel.id);
+    if (!videoOnly) fetchChannelAnalytics(channel.id);
+  };
+
+  const fetchChannelAnalytics = async (cid) => {
+    if (!cid || cid.startsWith('UC_dummy')) return;
+    setChannelAnalyticsLoading(true);
+    try {
+      const [d2Res, rtRes] = await Promise.all([
+        axios.get(`${API_BASE_URL}/yt/channel-analytics/${cid}`),
+        axios.get(`${API_BASE_URL}/yt/channel-realtime/${cid}`),
+      ]);
+      setChannelAnalytics(d2Res.data);
+      setChannelRealtime(rtRes.data);
+    } catch (_) {
+      // silently fail — video data still works
+    } finally {
+      setChannelAnalyticsLoading(false);
+    }
   };
 
   const handleBreadcrumbClick = (index) => {
@@ -366,6 +437,27 @@ function App() {
     if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
     return n.toLocaleString();
   };
+
+  const formatHours = (num) => {
+    if (num === undefined || num === null) return '0 hrs';
+    const n = Number(num);
+    if (n >= 1000000) return (n / 1000000).toFixed(2) + 'M hrs';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K hrs';
+    return n.toFixed(1) + ' hrs';
+  };
+
+  const ALL_CHANNEL_METRICS = [
+    { id: 'views',             label: 'Views',        color: '#f43f5e', fmt: (val)    => formatNumber(val) },
+    { id: 'watchTimeHrs',      label: 'Watch Hrs',    color: '#8b5cf6', fmt: (val)    => formatNumber(Math.round(val)) },
+    { id: 'netSubs',           label: 'Net Subs',     color: '#3b82f6', fmt: (val)    => `${val >= 0 ? '+' : ''}${formatNumber(val)}` },
+    { id: 'likes',             label: 'Likes',        color: '#ec4899', fmt: (val)    => formatNumber(val) },
+    { id: 'avgViewDuration',   label: 'Avg Duration', color: '#f59e0b', fmt: (val)    => `${Math.round(val)}s` },
+    { id: 'avgViewPercentage', label: 'Avg View %',   color: '#14b8a6', fmt: (val)    => `${Number(val).toFixed(1)}%` },
+    { id: 'comments',          label: 'Comments',     color: '#06b6d4', fmt: (val)    => formatNumber(val) },
+    { id: 'shares',            label: 'Shares',       color: '#f97316', fmt: (val)    => formatNumber(val) },
+    { id: 'subscribersGained', label: 'Subs Gained',  color: '#10b981', fmt: (val)    => formatNumber(val) },
+    { id: 'subscribersLost',   label: 'Subs Lost',    color: '#ef4444', fmt: (val)    => formatNumber(val) },
+  ];
 
   const formatAvd = (secs) => {
     if (!secs) return '0m 0s';
@@ -459,28 +551,32 @@ function App() {
           {/* Center: Tabs */}
             <div className="flex items-center gap-1">
               {[
-                { id: 'business', label: 'Business Hub', icon: Building2 },
-                { id: 'channel', label: 'Channel Explorer', icon: MonitorPlay },
-                { id: 'teacher', label: 'Faculty Metrics', icon: Trophy },
-              ].map(tab => (
-                <button
-                  key={tab.id}
-                  onClick={() => { setMainTab(tab.id); setBusinessView('list'); setBreadcrumbs([]); setProfile(null); }}
-                  className="flex items-center gap-2 px-6 py-4 text-[11px] font-bold tracking-wide uppercase transition-all relative group"
-                  style={{
-                    color: mainTab === tab.id ? v('accent') : v('tab-inactive'),
-                  }}
-                >
-                  <tab.icon size={14} className={mainTab === tab.id ? "text-rose-500" : "text-slate-400 group-hover:text-slate-600"} />
-                  {tab.label}
-                  {mainTab === tab.id && (
-                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-rose-500 rounded-t-full shadow-[0_-4px_10px_rgba(225,29,72,0.3)]" />
-                  )}
-                  {mainTab !== tab.id && (
-                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-transparent group-hover:bg-slate-200 transition-all" />
-                  )}
-                </button>
-              ))}
+                { id: 'business', label: 'Company Dashboard', icon: Building2 },
+                { id: 'channel',  label: 'Channel Explorer',  icon: MonitorPlay },
+                { id: 'teacher',  label: 'Faculty Metrics',   icon: Trophy },
+              ].map(tab => {
+                const isActive = mainTab === tab.id || (tab.id === 'channel' && mainTab === 'channel-detail-standalone');
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => { setMainTab(tab.id); setBusinessView('list'); setBreadcrumbs([]); setProfile(null); }}
+                    className="relative flex items-center gap-2.5 px-7 py-4 transition-all group"
+                    style={{ color: isActive ? v('accent') : v('tab-inactive') }}
+                  >
+                    <tab.icon
+                      size={16}
+                      style={{ color: isActive ? v('accent') : v('tab-inactive') }}
+                      className="transition-colors group-hover:text-rose-400"
+                    />
+                    <span className="text-[13px] font-black tracking-wide" style={{ color: isActive ? v('accent') : v('tab-inactive') }}>
+                      {tab.label}
+                    </span>
+                    {/* Active underline */}
+                    <div className={`absolute bottom-0 left-0 right-0 h-[3px] rounded-t-full transition-all duration-300 ${isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-40'}`}
+                      style={{ background: 'linear-gradient(90deg, #f43f5e, #fb923c)', boxShadow: isActive ? '0 -4px 12px rgba(244,63,94,0.4)' : 'none' }} />
+                  </button>
+                );
+              })}
             </div>
 
           {/* Right: Period selector + Theme + Live */}
@@ -562,7 +658,7 @@ function App() {
                 onRowClick={handleChannelClick} onBackClick={() => handleBreadcrumbClick(0)} />
             )}
             {businessView === 'channel-detail' && (
-              <ChannelDetail profile={profile} loading={loading}
+              <ChannelDetail profile={profile} loading={loading} videoOnly={true}
                 days={days} filteredVideos={filteredVideos} paginatedVideos={paginatedVideos}
                 currentPage={currentPage} totalPages={totalPages} videosPerPage={videosPerPage}
                 visibleColumns={visibleColumns} showConfig={showConfig} videoTypeFilter={videoTypeFilter}
@@ -670,52 +766,234 @@ function App() {
                         <tr><td colSpan={6 + visibleExtraCols.length} className="px-5 py-16 text-center text-sm font-semibold" style={{ color: v('text-label') }}>
                           {bqChannels.length === 0 ? 'No data yet — run the channel snapshot pipeline first.' : 'No matching channels.'}
                         </td></tr>
-                      ) : filtered.map((ch, idx) => (
-                        <tr key={ch.channel_id}
-                          onClick={() => handleChannelTabClick({ id: ch.channel_id, name: ch.channel_name })}
-                          className="cursor-pointer transition-colors group"
-                          style={{ borderBottom: `1px solid ${v('border-table')}` }}
-                          onMouseEnter={e => e.currentTarget.style.backgroundColor = v('bg-table-row-hover')}
-                          onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                      ) : filtered.map((ch, idx) => {
+                        const isExpanded = expandedExplorerChannel === ch.channel_id;
+                        const snap = explorerSnapshots[ch.channel_id];
+                        const snapLoading = explorerSnapshotLoading[ch.channel_id];
+                        const totalCols = 5 + visibleExtraCols.length + 1;
+                        return (
+                          <React.Fragment key={ch.channel_id}>
+                            {/* Main row */}
+                            <tr
+                              onClick={() => handleExplorerRowClick(ch)}
+                              className="cursor-pointer transition-colors group"
+                              style={{ borderBottom: isExpanded ? 'none' : `1px solid ${v('border-table')}`, backgroundColor: isExpanded ? v('bg-table-row-hover') : 'transparent' }}
+                              onMouseEnter={e => { if (!isExpanded) e.currentTarget.style.backgroundColor = v('bg-table-row-hover'); }}
+                              onMouseLeave={e => { if (!isExpanded) e.currentTarget.style.backgroundColor = 'transparent'; }}>
 
-                          {/* Rank */}
-                          <td className="px-5 py-4">
-                            <span className="text-sm font-black" style={{ color: v('row-number') }}>{String(idx + 1).padStart(2, '0')}</span>
-                          </td>
+                              <td className="px-5 py-4">
+                                <span className="text-sm font-black" style={{ color: v('row-number') }}>{String(idx + 1).padStart(2, '0')}</span>
+                              </td>
+                              <td className="px-5 py-4">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: isExpanded ? v('accent') : v('accent-soft'), border: `1px solid ${v('accent-border')}` }}>
+                                    <MonitorPlay size={14} style={{ color: isExpanded ? '#fff' : v('accent') }} />
+                                  </div>
+                                  <span className="text-sm font-bold group-hover:text-rose-500 transition-colors" style={{ color: v('text-heading') }}>{ch.channel_name}</span>
+                                </div>
+                              </td>
+                              <td className="px-5 py-4 text-right">
+                                <span className="text-sm font-black" style={{ color: v('accent') }}>{formatNumber(ch.subscribers)}</span>
+                              </td>
+                              <td className="px-5 py-4 text-right">
+                                <span className="text-sm font-bold" style={{ color: v('text-heading') }}>{formatNumber(ch.total_views)}</span>
+                              </td>
+                              <td className="px-5 py-4 text-right">
+                                <span className="text-sm font-bold" style={{ color: v('text-heading') }}>{formatNumber(ch.total_videos)}</span>
+                              </td>
+                              {visibleExtraCols.map(id => (
+                                <td key={id} className="px-5 py-4 text-right">
+                                  <span className="text-sm font-bold opacity-30" style={{ color: v('text-body') }}>—</span>
+                                </td>
+                              ))}
+                              <td className="px-5 py-4 text-center">
+                                <ChevronRight size={15}
+                                  className={`transition-all ${isExpanded ? 'rotate-90 text-rose-500' : 'group-hover:translate-x-0.5'}`}
+                                  style={{ color: isExpanded ? v('accent') : v('text-placeholder') }} />
+                              </td>
+                            </tr>
 
-                          {/* Channel name */}
-                          <td className="px-5 py-4">
-                            <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: v('accent-soft'), border: `1px solid ${v('accent-border')}` }}>
-                                <MonitorPlay size={14} style={{ color: v('accent') }} />
-                              </div>
-                              <span className="text-sm font-bold group-hover:text-rose-500 transition-colors" style={{ color: v('text-heading') }}>{ch.channel_name}</span>
-                            </div>
-                          </td>
+                            {/* Inline expanded panel */}
+                            {isExpanded && (() => {
+                              const mode = explorerMode[ch.channel_id] || 'realtime';
+                              const snap = explorerSnapshots[ch.channel_id];
+                              const snapLoading = explorerSnapshotLoading[ch.channel_id];
+                              const daily = explorerAnalytics[ch.channel_id] || [];
+                              const d2Loading = explorerAnalyticsLoading[ch.channel_id];
+                              const isLoading = mode === 'realtime' ? snapLoading : d2Loading;
 
-                          {/* BQ stats — always visible */}
-                          <td className="px-5 py-4 text-right">
-                            <span className="text-sm font-black" style={{ color: v('accent') }}>{formatNumber(ch.subscribers)}</span>
-                          </td>
-                          <td className="px-5 py-4 text-right">
-                            <span className="text-sm font-bold" style={{ color: v('text-heading') }}>{formatNumber(ch.total_views)}</span>
-                          </td>
-                          <td className="px-5 py-4 text-right">
-                            <span className="text-sm font-bold" style={{ color: v('text-heading') }}>{formatNumber(ch.total_videos)}</span>
-                          </td>
+                              return (
+                                <tr style={{ borderBottom: `1px solid ${v('border-table')}` }}>
+                                  <td colSpan={totalCols} className="px-6 py-5" style={{ backgroundColor: v('bg-input') }}>
 
-                          {/* Extra toggled columns — empty until video backfill */}
-                          {visibleExtraCols.map(id => (
-                            <td key={id} className="px-5 py-4 text-right">
-                              <span className="text-sm font-bold opacity-30" style={{ color: v('text-body') }}>—</span>
-                            </td>
-                          ))}
+                                    {/* Top bar: mode toggle + video data button */}
+                                    <div className="flex items-center justify-between mb-4">
+                                      {/* Mode tabs */}
+                                      <div className="flex items-center gap-1 p-1 rounded-xl" style={{ backgroundColor: v('bg-card'), border: `1px solid ${v('border-card')}` }}>
+                                        <button
+                                          onClick={e => { e.stopPropagation(); setExplorerMode(prev => ({ ...prev, [ch.channel_id]: 'realtime' })); }}
+                                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all"
+                                          style={{ backgroundColor: mode === 'realtime' ? '#10b981' : 'transparent', color: mode === 'realtime' ? '#fff' : v('text-secondary') }}>
+                                          <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse inline-block" />
+                                          Near Real-Time
+                                        </button>
+                                        <button
+                                          onClick={e => { e.stopPropagation(); setExplorerMode(prev => ({ ...prev, [ch.channel_id]: 'd2' })); }}
+                                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all"
+                                          style={{ backgroundColor: mode === 'd2' ? v('accent') : 'transparent', color: mode === 'd2' ? '#fff' : v('text-secondary') }}>
+                                          Day-wise D-2 Stats
+                                        </button>
+                                      </div>
 
-                          <td className="px-5 py-4 text-center">
-                            <ChevronRight size={15} className="group-hover:text-rose-500 transition-all group-hover:translate-x-0.5" style={{ color: v('text-placeholder') }} />
-                          </td>
-                        </tr>
-                      ))}
+                                      {/* Video data CTA */}
+                                      <button
+                                        onClick={e => { e.stopPropagation(); handleChannelTabClick({ id: ch.channel_id, name: ch.channel_name }, true); }}
+                                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-wider border-2 transition-all group/btn"
+                                        style={{ backgroundColor: 'transparent', color: v('text-secondary'), borderColor: v('border-card') }}>
+                                        Video Level Data
+                                        <ChevronRight size={13} className="group-hover/btn:translate-x-0.5 transition-transform" />
+                                      </button>
+                                    </div>
+
+                                    {isLoading ? (
+                                      <div className="flex items-center gap-2 py-6 justify-center">
+                                        <Loader2 size={16} className="animate-spin" style={{ color: v('accent') }} />
+                                        <span className="text-xs font-bold" style={{ color: v('text-label') }}>Fetching data...</span>
+                                      </div>
+                                    ) : mode === 'realtime' ? (
+                                      /* Near Real-Time panel */
+                                      <div>
+                                        {snap ? (
+                                          <div className="flex flex-col items-center gap-4 py-2">
+                                            {/* Stat cards — centered */}
+                                            <div className="flex gap-4 justify-center flex-wrap">
+                                              {[
+                                                { label: 'Subscribers', val: formatNumber(snap.subscribers), color: '#10b981', bg: '#10b98115' },
+                                                { label: 'Total Views',  val: formatNumber(snap.totalViews),  color: v('accent'),       bg: v('accent-soft') },
+                                                { label: 'Total Videos', val: formatNumber(snap.totalVideos), color: v('text-heading'),  bg: v('bg-card') },
+                                              ].map(s => (
+                                                <div key={s.label} className="rounded-2xl px-8 py-5 text-center min-w-[160px] transition-all"
+                                                  style={{ backgroundColor: s.bg, border: `1.5px solid ${v('border-card')}` }}>
+                                                  <p className="text-[9px] font-black uppercase tracking-[0.18em] mb-2" style={{ color: v('text-label') }}>{s.label}</p>
+                                                  <p className="text-2xl font-black" style={{ color: s.color }}>{s.val}</p>
+                                                </div>
+                                              ))}
+                                            </div>
+                                            {/* Timestamp centered */}
+                                            {snap.fetchedAt && (
+                                              <div className="flex items-center gap-2">
+                                                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                                <p className="text-[11px] font-semibold" style={{ color: v('text-label') }}>
+                                                  Last synced · <span className="font-black" style={{ color: v('text-heading') }}>{new Date(snap.fetchedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                                                </p>
+                                              </div>
+                                            )}
+                                          </div>
+                                        ) : (
+                                          <p className="text-xs font-semibold text-center py-4" style={{ color: v('text-placeholder') }}>
+                                            No realtime data — run channel_pipeline.py option 3
+                                          </p>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      /* D-2 day-wise table */
+                                      (() => {
+                                        if (daily.length === 0) return (
+                                          <p className="text-xs font-semibold text-center py-4" style={{ color: v('text-placeholder') }}>
+                                            No D-2 data — run channel_pipeline.py option 1
+                                          </p>
+                                        );
+                                        const exCols = channelMetricCols;
+                                        const activeCols = ALL_CHANNEL_METRICS.filter(m => exCols.includes(m.id));
+                                        const filteredDaily = [...daily]
+                                          .filter(d => (!channelDailyDateFrom || d.date >= channelDailyDateFrom) && (!channelDailyDateTo || d.date <= channelDailyDateTo))
+                                          .sort((a,b) => b.date.localeCompare(a.date));
+                                        const totals = filteredDaily.reduce((acc, d) => {
+                                          activeCols.forEach(m => { acc[m.id] = (acc[m.id] || 0) + (d[m.id] || 0); });
+                                          return acc;
+                                        }, {});
+                                        return (
+                                          <div className="rounded-xl overflow-hidden border" style={{ borderColor: v('border-card') }}>
+                                            {/* Controls bar */}
+                                            <div className="px-4 py-2.5 flex flex-wrap items-center gap-2" style={{ backgroundColor: v('bg-card'), borderBottom: `1px solid ${v('border-card')}` }}>
+                                              {/* Labels */}
+                                              <span className="text-[11px] font-black mr-1" style={{ color: v('text-heading') }}>Day-wise Stats</span>
+                                              <span className="px-2 py-0.5 rounded-full text-[9px] font-black" style={{ backgroundColor: v('accent-soft'), color: v('accent') }}>{filteredDaily.length} days</span>
+                                              <span className="px-2 py-0.5 rounded-full text-[9px] font-semibold" style={{ backgroundColor: v('bg-input'), color: v('text-label') }}>D-2 · Exact</span>
+
+                                              <div className="flex-1" />
+
+                                              {/* Date range */}
+                                              <DateRangePicker
+                                                from={channelDailyDateFrom} setFrom={setChannelDailyDateFrom}
+                                                to={channelDailyDateTo} setTo={setChannelDailyDateTo}
+                                                compact
+                                              />
+
+                                              {/* Metric picker */}
+                                              <MetricPicker
+                                                metrics={ALL_CHANNEL_METRICS}
+                                                selected={exCols}
+                                                onToggle={toggleChannelMetric}
+                                                open={showChannelMetricPicker}
+                                                setOpen={setShowChannelMetricPicker}
+                                                compact
+                                              />
+                                            </div>
+
+                                            {/* Table */}
+                                            <div className="overflow-x-auto max-h-72 overflow-y-auto">
+                                              <table className="w-full text-[11px]">
+                                                <thead className="sticky top-0" style={{ backgroundColor: v('bg-table-header') }}>
+                                                  <tr>
+                                                    <th className="px-3 py-2.5 text-[9px] font-black uppercase tracking-wider text-left whitespace-nowrap" style={{ color: v('text-table-header') }}>Date</th>
+                                                    {activeCols.map(m => (
+                                                      <th key={m.id} className="px-3 py-2.5 text-[9px] font-black uppercase tracking-wider text-right whitespace-nowrap" style={{ color: m.color }}>{m.label}</th>
+                                                    ))}
+                                                  </tr>
+                                                </thead>
+                                                <tbody>
+                                                  {/* Totals row */}
+                                                  {filteredDaily.length > 0 && (
+                                                    <tr style={{ backgroundColor: v('accent-soft'), borderBottom: `2px solid ${v('accent-border')}` }}>
+                                                      <td className="px-3 py-2 text-left font-black text-[9px] uppercase tracking-wider whitespace-nowrap" style={{ color: v('accent') }}>Total · {filteredDaily.length}d</td>
+                                                      {activeCols.map(m => {
+                                                        let display;
+                                                        if (m.id === 'avgViewDuration') display = `${Math.round(filteredDaily.reduce((s,d) => s+(d.avgViewDuration||0),0)/filteredDaily.length)}s`;
+                                                        else if (m.id === 'avgViewPercentage') display = `${(filteredDaily.reduce((s,d) => s+(d.avgViewPercentage||0),0)/filteredDaily.length).toFixed(1)}%`;
+                                                        else display = m.fmt(totals[m.id] || 0);
+                                                        return <td key={m.id} className="px-3 py-2 text-right font-black" style={{ color: m.color }}>{display}</td>;
+                                                      })}
+                                                    </tr>
+                                                  )}
+                                                  {filteredDaily.length === 0 ? (
+                                                    <tr><td colSpan={activeCols.length+1} className="px-3 py-6 text-center text-xs font-semibold" style={{ color: v('text-label') }}>No data in selected range</td></tr>
+                                                  ) : filteredDaily.map(d => (
+                                                    <tr key={d.date} style={{ borderBottom: `1px solid ${v('border-table')}` }}
+                                                      onMouseEnter={e => e.currentTarget.style.backgroundColor = v('bg-table-row-hover')}
+                                                      onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                                      <td className="px-3 py-2 font-black text-left whitespace-nowrap" style={{ color: v('text-heading') }}>{d.date}</td>
+                                                      {activeCols.map(m => (
+                                                        <td key={m.id} className="px-3 py-2 text-right font-bold" style={{ color: m.color }}>
+                                                          {m.id === 'netSubs' ? `${d.netSubs>=0?'+':''}${formatNumber(d.netSubs)}` : m.fmt(d[m.id]??0)}
+                                                        </td>
+                                                      ))}
+                                                    </tr>
+                                                  ))}
+                                                </tbody>
+                                              </table>
+                                            </div>
+                                          </div>
+                                        );
+                                      })()
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })()}
+                          </React.Fragment>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -833,7 +1111,7 @@ function App() {
                             <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{f.totalChannels}</td>
                             <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalVideos)}</td>
                             <td className="px-4 py-3 text-center font-black" style={{ color: v('accent') }}>{formatNumber(f.totalViews)}</td>
-                            <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.totalWatchHrs)}h</td>
+                            <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatHours(f.totalWatchHrs)}</td>
                             <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatNumber(f.avgViewsPerVideo)}</td>
                             <td className="px-4 py-3 text-center font-bold" style={{ color: v('text-body') }}>{formatAvd(f.avgAvd)}</td>
                             <td className="px-4 py-3 text-center">
@@ -914,7 +1192,7 @@ function App() {
                                                     {video.publishedAt ? new Date(video.publishedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
                                                   </td>
                                                   <td className="px-3 py-2 text-center font-black" style={{ color: v('accent') }}>{formatNumber(video.views)}</td>
-                                                  <td className="px-3 py-2 text-center font-bold" style={{ color: v('text-body') }}>{video.watchTimeHrs}h</td>
+                                                  <td className="px-3 py-2 text-center font-bold" style={{ color: v('text-body') }}>{formatHours(video.watchTimeHrs)}</td>
                                                   <td className="px-3 py-2 text-center font-bold" style={{ color: v('text-body') }}>{formatAvd(video.avd)}</td>
                                                   <td className="px-3 py-2 text-center">
                                                     <span className={`font-black ${video.netSubs >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
@@ -953,7 +1231,15 @@ function App() {
 
         {/* ===================== STANDALONE CHANNEL DETAIL ===================== */}
         {mainTab === 'channel-detail-standalone' && (
-          <ChannelDetail profile={profile} loading={loading}
+          <ChannelDetail profile={profile} loading={loading} videoOnly={channelVideoOnly}
+            channelAnalytics={channelAnalytics} channelRealtime={channelRealtime}
+            channelAnalyticsLoading={channelAnalyticsLoading}
+            channelDataMode={channelDataMode} setChannelDataMode={setChannelDataMode}
+            allChannelMetrics={ALL_CHANNEL_METRICS}
+            channelMetricCols={channelMetricCols} toggleChannelMetric={toggleChannelMetric}
+            channelDailyDateFrom={channelDailyDateFrom} setChannelDailyDateFrom={setChannelDailyDateFrom}
+            channelDailyDateTo={channelDailyDateTo} setChannelDailyDateTo={setChannelDailyDateTo}
+            showChannelMetricPicker={showChannelMetricPicker} setShowChannelMetricPicker={setShowChannelMetricPicker}
             days={days} filteredVideos={filteredVideos} paginatedVideos={paginatedVideos}
             currentPage={currentPage} totalPages={totalPages} videosPerPage={videosPerPage}
             visibleColumns={visibleColumns} showConfig={showConfig} videoTypeFilter={videoTypeFilter}
@@ -965,7 +1251,7 @@ function App() {
             onVideoRowClick={handleVideoRowClick}
             setCurrentPage={setCurrentPage} setShowConfig={setShowConfig}
             toggleColumn={toggleColumn} toggleVideoType={toggleVideoType}
-            formatNumber={formatNumber} formatAvd={formatAvd} />
+            formatNumber={formatNumber} formatAvd={formatAvd} formatHours={formatHours} />
         )}
 
       </main>
@@ -1246,16 +1532,103 @@ function VideoDrillDown({ video, dailyCache, dailyLoading,
 }
 
 // ============================================================
+// SHARED UI COMPONENTS
+// ============================================================
+
+function DateRangePicker({ from, setFrom, to, setTo, compact = false }) {
+  const sz = compact ? 'px-2.5 py-1.5 text-[10px]' : 'px-3 py-2 text-[11px]';
+  const active = from || to;
+  return (
+    <div className={`flex items-center gap-2 rounded-xl border-2 transition-all ${sz}`}
+      style={{
+        backgroundColor: v('bg-input'),
+        borderColor: active ? v('accent') : v('border-card'),
+      }}>
+      <Calendar size={compact ? 11 : 13} style={{ color: active ? v('accent') : v('text-placeholder') }} />
+      <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+        className="bg-transparent font-bold outline-none"
+        style={{ color: from ? v('text-heading') : v('text-placeholder'), width: compact ? '100px' : '120px', fontSize: compact ? 10 : 11 }} />
+      <span className="font-black opacity-40" style={{ color: v('text-heading') }}>→</span>
+      <input type="date" value={to} onChange={e => setTo(e.target.value)}
+        className="bg-transparent font-bold outline-none"
+        style={{ color: to ? v('text-heading') : v('text-placeholder'), width: compact ? '100px' : '120px', fontSize: compact ? 10 : 11 }} />
+      {active && (
+        <button onClick={() => { setFrom(''); setTo(''); }}
+          className="p-0.5 rounded-full transition-opacity hover:opacity-70"
+          style={{ color: v('accent') }}>
+          <X size={compact ? 11 : 13} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function MetricPicker({ metrics, selected, onToggle, open, setOpen, compact = false }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    if (open) document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open, setOpen]);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen(p => !p)}
+        className={`flex items-center gap-1.5 rounded-xl border-2 font-black uppercase tracking-wider transition-all ${compact ? 'px-2.5 py-1.5 text-[10px]' : 'px-3 py-2 text-[11px]'}`}
+        style={{
+          backgroundColor: open ? v('accent-soft') : v('bg-input'),
+          color: open ? v('accent') : v('text-secondary'),
+          borderColor: open ? v('accent-border') : v('border-card'),
+        }}>
+        <Settings2 size={compact ? 11 : 13} />
+        Metrics
+        <span className="px-1.5 py-0.5 rounded-full text-white font-black" style={{ backgroundColor: v('accent'), fontSize: 9 }}>{selected.length}</span>
+      </button>
+      {open && (
+        <div className="absolute right-0 mt-2 rounded-2xl shadow-2xl z-[200]"
+          style={{ backgroundColor: v('bg-card'), border: `1px solid ${v('border-card')}`, width: 200 }}>
+          <div className="px-4 pt-3 pb-1">
+            <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: v('text-label') }}>Toggle Columns</p>
+          </div>
+          <div className="px-2 pb-2 max-h-64 overflow-y-auto">
+            {metrics.map(m => (
+              <label key={m.id} className="flex items-center gap-2.5 px-2 py-2 rounded-xl cursor-pointer transition-colors"
+                onMouseEnter={e => e.currentTarget.style.backgroundColor = v('bg-table-row-hover')}
+                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                <input type="checkbox" checked={selected.includes(m.id)} onChange={() => onToggle(m.id)}
+                  className="w-3.5 h-3.5 accent-rose-500 shrink-0" />
+                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: m.color }} />
+                <span className="text-[11px] font-bold" style={{ color: selected.includes(m.id) ? v('text-heading') : v('text-secondary') }}>{m.label}</span>
+              </label>
+            ))}
+          </div>
+          <div className="px-3 pb-3">
+            <button onClick={() => setOpen(false)}
+              className="w-full py-1.5 rounded-xl text-[10px] font-black uppercase text-white"
+              style={{ backgroundColor: v('accent') }}>Done</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
 // CHANNEL DETAIL COMPONENT
 // ============================================================
-function ChannelDetail({ profile, loading, filteredVideos, paginatedVideos,
+function ChannelDetail({ profile, loading, videoOnly,
+  channelAnalytics, channelRealtime, channelAnalyticsLoading, channelDataMode, setChannelDataMode,
+  allChannelMetrics, channelMetricCols, toggleChannelMetric,
+  channelDailyDateFrom, setChannelDailyDateFrom, channelDailyDateTo, setChannelDailyDateTo,
+  showChannelMetricPicker, setShowChannelMetricPicker,
+  filteredVideos, paginatedVideos,
   currentPage, totalPages, videosPerPage, visibleColumns, showConfig, videoTypeFilter,
   videoSearch, setVideoSearch,
   pubDateFrom, setPubDateFrom, pubDateTo, setPubDateTo,
   expandedVideoId, expandedMetric, setExpandedMetric,
   dailyCache, dailyLoading, onVideoRowClick,
   setCurrentPage, setShowConfig, toggleColumn, toggleVideoType,
-  formatNumber, formatAvd }) {
+  formatNumber, formatAvd, formatHours }) {
 
   if (loading) {
     return (
@@ -1270,8 +1643,40 @@ function ChannelDetail({ profile, loading, filteredVideos, paginatedVideos,
   const totalCols = 2 + visibleColumns.length;
 
   return (
-    <div className="space-y-8 animate-fade-in">
-      {/* Channel Header */}
+    <div className="space-y-6 animate-fade-in">
+      {/* Near real-time strip — video-only mode */}
+      {videoOnly && channelRealtime?.snapshot && (
+        <div className="rounded-2xl px-6 py-4 flex items-center justify-between flex-wrap gap-4"
+          style={{ backgroundColor: v('bg-card'), border: `1px solid ${v('border-card')}`, boxShadow: v('card-shadow') }}>
+          <div className="flex items-center gap-3">
+            {profile.identity.thumbnail_url && (
+              <img src={profile.identity.thumbnail_url} className="w-10 h-10 rounded-xl object-cover border" style={{ borderColor: v('border-card') }} />
+            )}
+            <div>
+              <p className="text-[15px] font-black" style={{ color: v('text-heading') }}>{profile.identity.name}</p>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse inline-block" />
+                <p className="text-[10px] font-semibold" style={{ color: v('text-label') }}>Near Real-Time · {new Date(channelRealtime.snapshot.fetchedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</p>
+              </div>
+            </div>
+          </div>
+          <div className="flex gap-3 flex-wrap">
+            {[
+              { label: 'Subscribers', val: formatNumber(channelRealtime.snapshot.subscribers), color: '#10b981' },
+              { label: 'Total Views',  val: formatNumber(channelRealtime.snapshot.totalViews),  color: v('accent') },
+              { label: 'Total Videos', val: formatNumber(channelRealtime.snapshot.totalVideos), color: v('text-heading') },
+            ].map(s => (
+              <div key={s.label} className="text-center px-4 py-2 rounded-xl" style={{ backgroundColor: v('bg-input'), border: `1px solid ${v('border-card')}` }}>
+                <p className="text-[9px] font-black uppercase tracking-widest mb-1" style={{ color: v('text-label') }}>{s.label}</p>
+                <p className="text-base font-black" style={{ color: s.color }}>{s.val}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Channel Header — hidden in video-only mode */}
+      {!videoOnly && <>
       <div className="rounded-2xl p-8 flex flex-col lg:flex-row items-center gap-10 transition-all duration-500"
         style={{ backgroundColor: v('bg-card'), border: `1px solid ${v('border-card')}`, boxShadow: v('card-shadow') }}>
         <div className="relative group shrink-0">
@@ -1306,6 +1711,250 @@ function ChannelDetail({ profile, loading, filteredVideos, paginatedVideos,
           ))}
         </div>
       </div>
+
+      {/* ── Channel Analytics Section ── */}
+      </> /* end !videoOnly header block */}
+      {!videoOnly && <>
+      <div className="rounded-2xl overflow-hidden transition-all border" style={{ backgroundColor: v('bg-card'), borderColor: v('border-card'), boxShadow: v('card-shadow') }}>
+        {/* Header */}
+        <div className="px-6 py-4 flex items-center justify-between" style={{ borderBottom: `1px solid ${v('border-light')}` }}>
+          <div>
+            <h3 className="text-base font-black tracking-tight" style={{ color: v('text-heading') }}>Channel Analytics</h3>
+            <div className="flex items-center gap-2 mt-1">
+              {channelDataMode === 'realtime' ? (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse inline-block" />
+                  <p className="text-[11px] font-semibold" style={{ color: v('text-label') }}>
+                    Near Real-Time · Data API v3 · Updated every few hours
+                  </p>
+                  {channelRealtime?.snapshot?.fetchedAt && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black" style={{ backgroundColor: '#10b98120', color: '#10b981' }}>
+                      Last sync · {new Date(channelRealtime.snapshot.fetchedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <>
+                  <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" />
+                  <p className="text-[11px] font-semibold" style={{ color: v('text-label') }}>
+                    Analytics API · 2-day lag · Exact data, matches Looker Studio
+                  </p>
+                </>
+              )}
+            </div>
+          </div>
+          {/* Mode toggle */}
+          <div className="flex items-center gap-1 p-1 rounded-xl" style={{ backgroundColor: v('bg-input') }}>
+            <button onClick={() => setChannelDataMode('realtime')}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all"
+              style={{ backgroundColor: channelDataMode === 'realtime' ? '#10b981' : 'transparent', color: channelDataMode === 'realtime' ? '#fff' : v('text-secondary') }}>
+              <span className={`w-1.5 h-1.5 rounded-full bg-current ${channelDataMode === 'realtime' ? 'animate-pulse' : ''}`} />
+              Near Real-Time
+            </button>
+            <button onClick={() => setChannelDataMode('d2')}
+              className="px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all"
+              style={{ backgroundColor: channelDataMode === 'd2' ? v('accent') : 'transparent', color: channelDataMode === 'd2' ? '#fff' : v('text-secondary') }}>
+              Day-wise D-2
+            </button>
+          </div>
+        </div>
+
+        {channelAnalyticsLoading ? (
+          <div className="flex items-center justify-center py-10 gap-2">
+            <Loader2 size={18} className="animate-spin" style={{ color: v('accent') }} />
+            <span className="text-xs font-bold" style={{ color: v('text-label') }}>Loading analytics...</span>
+          </div>
+        ) : channelDataMode === 'd2' ? (
+          /* D-2 Analytics grid */
+          (() => {
+            const daily = channelAnalytics?.daily || [];
+            if (!daily.length) return (
+              <div className="px-6 py-10 text-center text-sm font-semibold" style={{ color: v('text-label') }}>
+                No D-2 analytics data yet — run channel_pipeline.py option 1 first.
+              </div>
+            );
+            // Aggregate totals
+            const totals = daily.reduce((acc, d) => ({
+              views:             (acc.views || 0) + d.views,
+              watchTimeHrs:      (acc.watchTimeHrs || 0) + d.watchTimeHrs,
+              likes:             (acc.likes || 0) + d.likes,
+              comments:          (acc.comments || 0) + d.comments,
+              shares:            (acc.shares || 0) + d.shares,
+              subscribersGained: (acc.subscribersGained || 0) + d.subscribersGained,
+              subscribersLost:   (acc.subscribersLost || 0) + d.subscribersLost,
+              netSubs:           (acc.netSubs || 0) + d.netSubs,
+            }), {});
+            const avgAvd = daily.reduce((s, d) => s + d.avgViewDuration, 0) / daily.length;
+            const avgPct = daily.reduce((s, d) => s + d.avgViewPercentage, 0) / daily.length;
+
+            const stats = [
+              { label: 'Total Views',       val: formatNumber(totals.views),             accent: true },
+              { label: 'Watch Time (hrs)',   val: formatNumber(Math.round(totals.watchTimeHrs)), accent: false },
+              { label: 'Avg View Duration',  val: `${Math.round(avgAvd)}s`,              accent: false },
+              { label: 'Avg View %',         val: `${avgPct.toFixed(1)}%`,               accent: false },
+              { label: 'Likes',              val: formatNumber(totals.likes),             accent: false },
+              { label: 'Comments',           val: formatNumber(totals.comments),          accent: false },
+              { label: 'Shares',             val: formatNumber(totals.shares),            accent: false },
+              { label: 'Subs Gained',        val: formatNumber(totals.subscribersGained), accent: false },
+              { label: 'Subs Lost',          val: formatNumber(totals.subscribersLost),   accent: false },
+              { label: 'Net Subs',           val: formatNumber(totals.netSubs),           accent: totals.netSubs > 0 },
+              { label: 'Days of Data',       val: daily.length,                           accent: false },
+            ];
+            return (
+              <div>
+                {/* Summary cards */}
+                <div className="p-6 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+                  {stats.map(s => (
+                    <div key={s.label} className="rounded-xl p-4 text-center" style={{ backgroundColor: v('bg-input'), border: `1px solid ${v('border-card')}` }}>
+                      <p className="text-[9px] font-black uppercase tracking-widest mb-1" style={{ color: v('text-label') }}>{s.label}</p>
+                      <p className="text-lg font-black" style={{ color: s.accent ? v('accent') : v('text-heading') }}>{s.val}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Day-wise breakdown table */}
+                {(() => {
+                  const activeCols = allChannelMetrics.filter(m => channelMetricCols.includes(m.id));
+                  const filtered = [...daily]
+                    .filter(d => (!channelDailyDateFrom || d.date >= channelDailyDateFrom) && (!channelDailyDateTo || d.date <= channelDailyDateTo))
+                    .sort((a, b) => b.date.localeCompare(a.date));
+
+                  // column totals
+                  const totals = filtered.reduce((acc, d) => {
+                    activeCols.forEach(m => { acc[m.id] = (acc[m.id] || 0) + (d[m.id] || 0); });
+                    return acc;
+                  }, {});
+
+                  return (
+                    <div style={{ borderTop: `1px solid ${v('border-light')}` }}>
+                      {/* Controls bar */}
+                      <div className="px-6 py-3 flex flex-wrap items-center gap-3" style={{ borderBottom: `1px solid ${v('border-light')}` }}>
+
+                        {/* Left: count */}
+                        <div className="flex-1 min-w-0 flex items-center gap-2">
+                          <span className="text-[12px] font-black" style={{ color: v('text-heading') }}>Day-wise Stats</span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black" style={{ backgroundColor: v('accent-soft'), color: v('accent') }}>
+                            {filtered.length} days
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{ backgroundColor: v('bg-input'), color: v('text-label') }}>
+                            D-2 · Exact
+                          </span>
+                        </div>
+
+                        {/* Date range filter */}
+                        <DateRangePicker
+                          from={channelDailyDateFrom} setFrom={setChannelDailyDateFrom}
+                          to={channelDailyDateTo} setTo={setChannelDailyDateTo}
+                        />
+
+                        {/* Metric picker */}
+                        <MetricPicker
+                          metrics={allChannelMetrics}
+                          selected={channelMetricCols}
+                          onToggle={toggleChannelMetric}
+                          open={showChannelMetricPicker}
+                          setOpen={setShowChannelMetricPicker}
+                        />
+                      </div>
+
+                      {/* Table */}
+                      <div className="overflow-x-auto overflow-y-auto max-h-[480px]">
+                        <table className="w-full text-[11px]">
+                          <thead className="sticky top-0 z-10" style={{ backgroundColor: v('bg-table-header') }}>
+                            <tr>
+                              <th className="px-4 py-3 text-left text-[9px] font-black uppercase tracking-widest whitespace-nowrap" style={{ color: v('text-table-header') }}>Date</th>
+                              {activeCols.map(m => (
+                                <th key={m.id} className="px-4 py-3 text-right text-[9px] font-black uppercase tracking-widest whitespace-nowrap" style={{ color: m.color }}>{m.label}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {/* Totals row */}
+                            {filtered.length > 0 && (
+                              <tr style={{ backgroundColor: v('accent-soft'), borderBottom: `2px solid ${v('accent-border')}` }}>
+                                <td className="px-4 py-2.5 text-left font-black text-[10px] uppercase tracking-wider" style={{ color: v('accent') }}>
+                                  Total · {filtered.length} days
+                                </td>
+                                {activeCols.map(m => {
+                                  let display;
+                                  if (m.id === 'avgViewDuration')
+                                    display = `${Math.round(filtered.reduce((s,d) => s + (d.avgViewDuration||0), 0) / filtered.length)}s`;
+                                  else if (m.id === 'avgViewPercentage')
+                                    display = `${(filtered.reduce((s,d) => s + (d.avgViewPercentage||0), 0) / filtered.length).toFixed(1)}%`;
+                                  else
+                                    display = m.fmt(totals[m.id] || 0);
+                                  return (
+                                    <td key={m.id} className="px-4 py-2.5 text-right font-black" style={{ color: m.color }}>{display}</td>
+                                  );
+                                })}
+                              </tr>
+                            )}
+                            {filtered.length === 0 ? (
+                              <tr><td colSpan={activeCols.length + 1} className="px-4 py-10 text-center text-sm font-semibold" style={{ color: v('text-label') }}>No data in selected range</td></tr>
+                            ) : filtered.map(d => (
+                              <tr key={d.date} style={{ borderBottom: `1px solid ${v('border-table')}` }}
+                                onMouseEnter={e => e.currentTarget.style.backgroundColor = v('bg-table-row-hover')}
+                                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+                                <td className="px-4 py-2.5 font-black text-left whitespace-nowrap" style={{ color: v('text-heading') }}>{d.date}</td>
+                                {activeCols.map(m => (
+                                  <td key={m.id} className="px-4 py-2.5 text-right font-bold" style={{ color: m.color }}>
+                                    {m.id === 'netSubs'
+                                      ? `${d.netSubs >= 0 ? '+' : ''}${formatNumber(d.netSubs)}`
+                                      : m.fmt(d[m.id] ?? 0, d)}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            );
+          })()
+        ) : (
+          /* Realtime snapshot */
+          (() => {
+            const snap = channelRealtime?.snapshot;
+            if (!snap) return (
+              <div className="px-6 py-10 text-center text-sm font-semibold" style={{ color: v('text-label') }}>
+                No realtime data yet — run channel_pipeline.py option 3 first.
+              </div>
+            );
+            const stats = [
+              { label: 'Subscribers',   val: formatNumber(snap.subscribers),  color: '#10b981' },
+              { label: 'Total Views',   val: formatNumber(snap.totalViews),    color: v('text-heading') },
+              { label: 'Total Videos',  val: formatNumber(snap.totalVideos),   color: v('text-heading') },
+            ];
+            return (
+              <div className="p-6">
+                <div className="grid grid-cols-3 gap-4 mb-4">
+                  {stats.map(s => (
+                    <div key={s.label} className="rounded-xl p-5 text-center" style={{ backgroundColor: v('bg-input'), border: `1px solid ${v('border-card')}` }}>
+                      <p className="text-[9px] font-black uppercase tracking-widest mb-1" style={{ color: v('text-label') }}>{s.label}</p>
+                      <p className="text-2xl font-black" style={{ color: s.color }}>{s.val}</p>
+                    </div>
+                  ))}
+                </div>
+                {snap.fetchedAt && (
+                  <div className="flex items-center gap-2 px-1">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse inline-block" />
+                    <p className="text-[12px] font-semibold" style={{ color: v('text-label') }}>
+                      Last synced ·{' '}
+                      <span className="font-black" style={{ color: v('text-heading') }}>
+                        {new Date(snap.fetchedAt).toLocaleString('en-IN', { dateStyle: 'long', timeStyle: 'short' })}
+                      </span>
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          })()
+        )}
+      </div>
+      </> /* end !videoOnly analytics block */}
 
       {/* Video Table Container */}
       <div className="rounded-2xl overflow-hidden shadow-2xl transition-all duration-500 border"
@@ -1374,30 +2023,14 @@ function ChannelDetail({ profile, loading, filteredVideos, paginatedVideos,
 
           {/* Published date range filter — second row */}
           <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-2 px-4 py-2 rounded-xl border-2"
-              style={{ backgroundColor: v('bg-input'), borderColor: pubDateFrom || pubDateTo ? v('accent') : v('border-card') }}>
-              <Calendar size={13} style={{ color: v('accent') }} />
-              <span className="text-[11px] font-black uppercase tracking-wider" style={{ color: v('text-label') }}>Uploaded</span>
-              <input type="date" value={pubDateFrom}
-                onChange={e => { setPubDateFrom(e.target.value); setCurrentPage(1); }}
-                className="bg-transparent text-[11px] font-bold outline-none"
-                style={{ color: v('text-primary') }} />
-              <span className="text-[11px] font-black" style={{ color: v('text-label') }}>→</span>
-              <input type="date" value={pubDateTo}
-                onChange={e => { setPubDateTo(e.target.value); setCurrentPage(1); }}
-                className="bg-transparent text-[11px] font-bold outline-none"
-                style={{ color: v('text-primary') }} />
-            </div>
+            <span className="text-[11px] font-black uppercase tracking-wider" style={{ color: v('text-label') }}>Uploaded</span>
+            <DateRangePicker
+              from={pubDateFrom} setFrom={v => { setPubDateFrom(v); setCurrentPage(1); }}
+              to={pubDateTo} setTo={v => { setPubDateTo(v); setCurrentPage(1); }}
+            />
             {(pubDateFrom || pubDateTo) && (
-              <button onClick={() => { setPubDateFrom(''); setPubDateTo(''); setCurrentPage(1); }}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-black border-2 transition-all"
-                style={{ color: v('accent'), borderColor: v('accent') }}>
-                <X size={12} /> Clear filter
-              </button>
-            )}
-            {(pubDateFrom || pubDateTo) && (
-              <span className="text-[11px] font-bold" style={{ color: v('text-label') }}>
-                Showing videos uploaded {pubDateFrom || '...'} → {pubDateTo || 'today'}
+              <span className="text-[11px] font-semibold px-3 py-1 rounded-full" style={{ backgroundColor: v('accent-soft'), color: v('accent') }}>
+                {pubDateFrom || '...'} → {pubDateTo || 'today'}
               </span>
             )}
           </div>
@@ -1471,7 +2104,7 @@ function ChannelDetail({ profile, loading, filteredVideos, paginatedVideos,
                       </div>
                     </td>
                     {visibleColumns.includes('views') && <td className="px-2 py-3 text-center text-[13px] font-black" style={{ color: v('text-heading') }}>{formatNumber(video.views)}</td>}
-                    {visibleColumns.includes('watchTime') && <td className="px-2 py-3 text-center text-[12px] font-bold" style={{ color: v('text-body') }}>{formatNumber(video.watchTimeHrs)}h</td>}
+                    {visibleColumns.includes('watchTime') && <td className="px-2 py-3 text-center text-[12px] font-bold" style={{ color: v('text-body') }}>{formatHours(video.watchTimeHrs)}</td>}
                     {visibleColumns.includes('avd') && <td className="px-2 py-3 text-center text-[12px] font-bold" style={{ color: v('text-body') }}>{formatAvd(video.avd)}</td>}
                     {visibleColumns.includes('subsGained') && <td className="px-2 py-3 text-center font-black text-emerald-500 text-[12px]">+{video.subsGained}</td>}
                     {visibleColumns.includes('subsLost') && <td className="px-2 py-3 text-center font-black text-rose-500 text-[12px]">{video.subsLost > 0 ? `-${video.subsLost}` : '0'}</td>}
