@@ -34,7 +34,7 @@ CONTENT_OWNER_ID = "5SbL5Sc3tpzVgc5AdIpymQ"
 WORKERS          = 6
 
 BASE_DIR         = Path(__file__).parent
-CSV_PATH         = BASE_DIR / "Channel_List_Updated.csv"
+CSV_PATH         = BASE_DIR / "Yt Central Mind - Channel List final.csv"
 SA_PATH          = BASE_DIR / "servcie_account_adda247-dev.json"
 TOKENS_PATH      = BASE_DIR / "tokens.json"
 
