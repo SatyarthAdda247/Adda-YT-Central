@@ -10,7 +10,6 @@ import {
 } from 'recharts';
 import { Loader2, Users, Eye, PlaySquare, TrendingUp, ChevronDown, ChevronRight } from 'lucide-react';
 import { MOCK_CHANNELS, MOCK_ANALYTICS_MAP, MOCK_CHANNEL_ANALYTICS_SINGLE } from './mockData';
-
 const API = import.meta.env.VITE_API_URL || '';
 const v   = (n) => `var(--${n})`;
 const C   = { green: '#22c55e', blue: '#60a5fa', purple: '#a78bfa', amber: '#fbbf24', red: '#ef4444' };
@@ -192,19 +191,18 @@ export default function CompanyDashboard() {
     const start = new Date(); start.setDate(start.getDate() - days);
     axios.get(`${API}/yt/channel-analytics/${ch.channel_id}?start=${start.toISOString().slice(0,10)}`)
       .then(r => setChannelAnalytics(prev => ({ ...prev, [ch.channel_id]: r.data.daily || [] })))
-      .catch(() => setChannelAnalytics(prev => ({ ...prev, [ch.channel_id]: MOCK_CHANNEL_ANALYTICS_SINGLE.slice(0, days + 1) })))
+      .catch(() => setChannelAnalytics(prev => ({ ...prev, [ch.channel_id]: (MOCK_ANALYTICS_MAP[ch.channel_id] || MOCK_CHANNEL_ANALYTICS_SINGLE).slice(0, days + 1) })))
       .finally(() => setChannelAnalyticsLoading(prev => ({ ...prev, [ch.channel_id]: false })));
   };
 
-  // 1. /yt/channel-stats — snapshot per channel
+  // 1. /yt/channel-stats — try real API, keep mock on failure
   useEffect(() => {
     axios.get(`${API}/yt/channel-stats`)
-      .then(r => setChannels(r.data.channels || []))
-      .catch(() => setChannels(MOCK_CHANNELS))
-      .finally(() => setLoadingCh(false));
+      .then(r => { if (r.data.channels?.length) setChannels(r.data.channels); })
+      .catch(() => {});
   }, []);
 
-  // 2. /yt/channel-analytics/:id — daily channel metrics, all channels
+  // 2. /yt/channel-analytics/:id — always runs, falls back to MOCK_ANALYTICS_MAP per channel
   useEffect(() => {
     if (!channels.length) return;
     setLoadingAn(true);
@@ -212,11 +210,22 @@ export default function CompanyDashboard() {
     const start = new Date();
     start.setDate(start.getDate() - days);
     const startStr = start.toISOString().slice(0, 10);
+    const isMock = channels[0]?.channel_id?.startsWith('UC_mock');
+    if (isMock) {
+      // Use pre-built mock analytics map directly — no API calls
+      const sliced = {};
+      channels.forEach(ch => {
+        sliced[ch.channel_id] = (MOCK_ANALYTICS_MAP[ch.channel_id] || MOCK_CHANNEL_ANALYTICS_SINGLE).slice(0, days + 1);
+      });
+      setAnalytics(sliced);
+      setLoadingAn(false);
+      return;
+    }
     Promise.allSettled(
       channels.map(ch =>
         axios.get(`${API}/yt/channel-analytics/${ch.channel_id}?start=${startStr}`)
-          .then(r => ({ id: ch.channel_id, daily: r.data.daily || [] }))
-          .catch(() => ({ id: ch.channel_id, daily: MOCK_CHANNEL_ANALYTICS.slice(0, days + 1) }))
+          .then(r => ({ id: ch.channel_id, daily: r.data.daily?.length ? r.data.daily : (MOCK_ANALYTICS_MAP[ch.channel_id] || MOCK_CHANNEL_ANALYTICS_SINGLE).slice(0, days + 1) }))
+          .catch(() => ({ id: ch.channel_id, daily: (MOCK_ANALYTICS_MAP[ch.channel_id] || MOCK_CHANNEL_ANALYTICS_SINGLE).slice(0, days + 1) }))
       )
     ).then(results => {
       const map = {};

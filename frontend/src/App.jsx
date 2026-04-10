@@ -255,11 +255,11 @@ function App() {
   };
 
   useEffect(() => {
-    if (mainTab === 'channel' && bqChannels.length === 0) {
+    if (mainTab === 'channel') {
       setBqLoading(true);
       axios.get(`${API_BASE_URL}/yt/channel-stats`)
-        .then(res => setBqChannels(res.data.channels || []))
-        .catch(() => setBqChannels(MOCK_CHANNELS))
+        .then(res => { if (res.data.channels?.length) setBqChannels(res.data.channels); })
+        .catch(() => {})
         .finally(() => setBqLoading(false));
     }
   }, [mainTab]);
@@ -286,11 +286,11 @@ function App() {
   }, [showFacultyMetricPicker]);
 
   useEffect(() => {
-    if (mainTab === 'teacher' && faculty.length === 0) {
+    if (mainTab === 'teacher') {
       setFacultyLoading(true);
       axios.get(`${API_BASE_URL}/yt/bq-faculty`)
-        .then(res => setFaculty(res.data.faculty || []))
-        .catch(() => setFaculty(MOCK_FACULTY))
+        .then(res => { if (res.data.faculty?.length) setFaculty(res.data.faculty); })
+        .catch(() => {})
         .finally(() => setFacultyLoading(false));
     }
   }, [mainTab]);
