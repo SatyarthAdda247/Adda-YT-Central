@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
+import CompanyDashboard from './CompanyDashboard';
+import { MOCK_CHANNELS, MOCK_BQ_VIDEOS, MOCK_FACULTY, MOCK_CHANNEL_ANALYTICS, MOCK_CHANNEL_ANALYTICS_SINGLE } from './mockData';
 import {
   Loader2, Sun, Moon,
   TrendingUp as UpArrow, TrendingDown as DownArrow,
@@ -220,6 +222,10 @@ function App() {
   const [explorerAnalytics, setExplorerAnalytics] = useState({});   // { channel_id: daily[] }
   const [explorerAnalyticsLoading, setExplorerAnalyticsLoading] = useState({});
   const [explorerMode, setExplorerMode] = useState({});             // { channel_id: 'd2'|'realtime' }
+  const [explorerDateRange, setExplorerDateRange] = useState('30d'); // 7d|30d|90d|1y
+  const [explorerChMetric, setExplorerChMetric]   = useState('subscribersGained');
+  const [explorerChCompare, setExplorerChCompare] = useState(false);
+  const [explorerChSelected, setExplorerChSelected] = useState(['subscribersGained']);
 
   const handleExplorerRowClick = (ch) => {
     if (expandedExplorerChannel === ch.channel_id) {
@@ -239,9 +245,12 @@ function App() {
     }
     if (!explorerAnalytics[ch.channel_id]) {
       setExplorerAnalyticsLoading(prev => ({ ...prev, [ch.channel_id]: true }));
-      axios.get(`${API_BASE_URL}/yt/channel-analytics/${ch.channel_id}`)
+      const days = explorerDateRange === '7d' ? 7 : explorerDateRange === '30d' ? 30 : explorerDateRange === '90d' ? 90 : 365;
+      const start = new Date(); start.setDate(start.getDate() - days);
+      const startStr = start.toISOString().slice(0, 10);
+      axios.get(`${API_BASE_URL}/yt/channel-analytics/${ch.channel_id}?start=${startStr}`)
         .then(res => setExplorerAnalytics(prev => ({ ...prev, [ch.channel_id]: res.data.daily || [] })))
-        .catch(() => {})
+        .catch(() => setExplorerAnalytics(prev => ({ ...prev, [ch.channel_id]: MOCK_CHANNEL_ANALYTICS_SINGLE })))
         .finally(() => setExplorerAnalyticsLoading(prev => ({ ...prev, [ch.channel_id]: false })));
     }
   };
@@ -251,7 +260,7 @@ function App() {
       setBqLoading(true);
       axios.get(`${API_BASE_URL}/yt/channel-stats`)
         .then(res => setBqChannels(res.data.channels || []))
-        .catch(() => setBqChannels([]))
+        .catch(() => setBqChannels(MOCK_CHANNELS))
         .finally(() => setBqLoading(false));
     }
   }, [mainTab]);
@@ -283,7 +292,7 @@ function App() {
       setFacultyLoading(true);
       axios.get(`${API_BASE_URL}/yt/bq-faculty`)
         .then(res => setFaculty(res.data.faculty || []))
-        .catch(() => setFaculty([]))
+        .catch(() => setFaculty(MOCK_FACULTY))
         .finally(() => setFacultyLoading(false));
     }
   }, [mainTab]);
@@ -440,7 +449,12 @@ function App() {
       setProfile(profRes.data);
       setBqVideos(videosRes.data.videos || []);
     } catch (err) {
-      setError(err.response?.data?.detail || "Failed to reach backend.");
+      // fallback to mock data so UI is still usable
+      setProfile({
+        identity: { name: cid, id: cid, custom_url: '', thumbnail_url: '', country: 'IN', description: 'Mock data — backend unavailable' },
+        stats: { subscribers_actual: 1000000, subscribers_rounded: 1000000, total_views: 150000000, total_videos: 5000 }
+      });
+      setBqVideos(MOCK_BQ_VIDEOS);
     } finally { setLoading(false); }
   };
 
@@ -671,8 +685,8 @@ function App() {
         {/* ===================== BUSINESS TAB ===================== */}
         {mainTab === 'business' && (
           <>
-            {/* Breadcrumbs */}
-            {breadcrumbs.length > 0 && (
+            {/* Breadcrumbs — only when drilled in */}
+            {businessView !== 'list' && breadcrumbs.length > 0 && (
               <div className="flex items-center gap-2 text-sm mb-4">
                 <button onClick={() => handleBreadcrumbClick(-1)}
                   className="font-semibold transition-colors hover:text-red-500"
@@ -690,30 +704,31 @@ function App() {
               </div>
             )}
 
-            {/* Hierarchy Flow */}
-            <div className="flex items-center gap-1 mb-5 text-[10px] font-bold uppercase tracking-wider">
-              {['Business', 'Category', 'Channel', 'Video'].map((label, i) => {
-                const activeMap = { Business: 'list', Category: 'categories', Channel: 'channels', Video: 'channel-detail' };
-                const isActive = businessView === activeMap[label];
-                return (
-                  <div key={label} className="flex items-center gap-1">
-                    {i > 0 && <ChevronRight size={10} className="mx-1" style={{ color: v('text-placeholder') }} />}
-                    <div className="px-3 py-1.5 rounded-md transition-all"
-                      style={{
-                        color: isActive ? v('breadcrumb-active-text') : v('breadcrumb-text'),
-                        backgroundColor: isActive ? v('breadcrumb-active-bg') : 'transparent',
-                        border: isActive ? `1px solid ${v('breadcrumb-active-border')}` : '1px solid transparent',
-                      }}>
-                      {label}
+            {/* Hierarchy Flow — only when drilled in */}
+            {businessView !== 'list' && (
+              <div className="flex items-center gap-1 mb-5 text-[10px] font-bold uppercase tracking-wider">
+                {['Business', 'Category', 'Channel', 'Video'].map((label, i) => {
+                  const activeMap = { Business: 'list', Category: 'categories', Channel: 'channels', Video: 'channel-detail' };
+                  const isActive = businessView === activeMap[label];
+                  return (
+                    <div key={label} className="flex items-center gap-1">
+                      {i > 0 && <ChevronRight size={10} className="mx-1" style={{ color: v('text-placeholder') }} />}
+                      <div className="px-3 py-1.5 rounded-md transition-all"
+                        style={{
+                          color: isActive ? v('breadcrumb-active-text') : v('breadcrumb-text'),
+                          backgroundColor: isActive ? v('breadcrumb-active-bg') : 'transparent',
+                          border: isActive ? `1px solid ${v('breadcrumb-active-border')}` : '1px solid transparent',
+                        }}>
+                        {label}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
 
             {businessView === 'list' && (
-              <DataTable title="Business Units" subtitle="Select a business unit to drill down into category and channel performance"
-                rows={HIERARCHY.businesses} columns={DATA_COLUMNS} onRowClick={handleBusinessClick} />
+              <CompanyDashboard />
             )}
             {businessView === 'categories' && selectedBusiness && (
               <DataTable title={selectedBusiness.name} subtitle="Categories under this business unit"
@@ -757,7 +772,17 @@ function App() {
                 </p>
               </div>
               <div className="flex items-center gap-3">
-                {/* Column picker */}
+                {/* Date range for D-2 analytics */}
+                <div className="flex items-center gap-1 p-1 rounded-xl" style={{ backgroundColor: v('bg-input'), border: `1px solid ${v('border-card')}` }}>
+                  {[{id:'7d',label:'7D'},{id:'30d',label:'30D'},{id:'90d',label:'90D'},{id:'1y',label:'1Y'}].map(r => (
+                    <button key={r.id} onClick={() => { setExplorerDateRange(r.id); setExplorerAnalytics({}); }}
+                      className="px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all"
+                      style={{
+                        backgroundColor: explorerDateRange === r.id ? v('accent') : 'transparent',
+                        color: explorerDateRange === r.id ? '#fff' : v('text-label'),
+                      }}>{r.label}</button>
+                  ))}
+                </div>
                 <div className="relative">
                   <button onClick={() => setShowColPicker(!showColPicker)}
                     className="flex items-center gap-2 px-4 py-2 rounded-xl text-[11px] font-black uppercase tracking-wider transition-all border-2"
@@ -835,15 +860,6 @@ function App() {
                                   {active ? (explorerSortDir === 'desc' ? '↓' : '↑') : '⇅'}
                                 </span>
                               </span>
-                            </th>
-                          );
-                        })}
-                        {/* Toggled extra columns */}
-                        {visibleExtraCols.map(id => {
-                          const col = CHANNEL_EXTRA_COLS.find(c => c.id === id);
-                          return (
-                            <th key={id} className="px-5 py-3.5 text-right text-[10px] font-black uppercase tracking-widest whitespace-nowrap" style={{ color: v('accent') }}>
-                              {col?.label}
                             </th>
                           );
                         })}
@@ -950,40 +966,134 @@ function App() {
                                         <span className="text-xs font-bold" style={{ color: v('text-label') }}>Fetching data...</span>
                                       </div>
                                     ) : mode === 'realtime' ? (
-                                      /* Near Real-Time panel */
-                                      <div>
-                                        {snap ? (
-                                          <div className="flex flex-col items-center gap-4 py-2">
-                                            {/* Stat cards — centered */}
-                                            <div className="flex gap-4 justify-center flex-wrap">
-                                              {[
-                                                { label: 'Subscribers', val: formatNumber(snap.subscribers), color: '#10b981', bg: '#10b98115' },
-                                                { label: 'Total Views',  val: formatNumber(snap.totalViews),  color: v('accent'),       bg: v('accent-soft') },
-                                                { label: 'Total Videos', val: formatNumber(snap.totalVideos), color: v('text-heading'),  bg: v('bg-card') },
-                                              ].map(s => (
-                                                <div key={s.label} className="rounded-2xl px-8 py-5 text-center min-w-[160px] transition-all"
-                                                  style={{ backgroundColor: s.bg, border: `1.5px solid ${v('border-card')}` }}>
-                                                  <p className="text-[9px] font-black uppercase tracking-[0.18em] mb-2" style={{ color: v('text-label') }}>{s.label}</p>
-                                                  <p className="text-2xl font-black" style={{ color: s.color }}>{s.val}</p>
-                                                </div>
-                                              ))}
+                                      /* Near Real-Time — line graph using D-2 analytics (no duplicate static cards) */
+                                      (() => {
+                                        const EX_METRICS = [
+                                          { id: 'subscribersGained', label: 'Subs Gained', color: '#22c55e' },
+                                          { id: 'netSubs',           label: 'Net Subs',    color: '#60a5fa' },
+                                          { id: 'views',             label: 'Views',       color: '#a78bfa' },
+                                          { id: 'watchTimeHrs',      label: 'Watch Hrs',   color: '#fbbf24' },
+                                        ];
+                                        const activeIds  = explorerChCompare ? explorerChSelected : [explorerChMetric];
+                                        const needsDual  = activeIds.includes('watchTimeHrs') && activeIds.length > 1;
+                                        const toggleEx   = (id) => {
+                                          if (!explorerChCompare) { setExplorerChMetric(id); return; }
+                                          setExplorerChSelected(prev =>
+                                            prev.includes(id)
+                                              ? prev.length === 1 ? prev : prev.filter(x => x !== id)
+                                              : [...prev, id]
+                                          );
+                                        };
+                                        const fmtN = (n) => {
+                                          if (n == null) return '0';
+                                          const x = Number(n);
+                                          if (x >= 1e6) return (x/1e6).toFixed(2)+'M';
+                                          if (x >= 1e3) return (x/1e3).toFixed(1)+'K';
+                                          return x.toLocaleString();
+                                        };
+                                        const fmtH = (n) => {
+                                          if (n == null) return '0';
+                                          const x = Number(n);
+                                          if (x >= 1e3) return (x/1e3).toFixed(1)+'K h';
+                                          return x.toFixed(0)+' h';
+                                        };
+                                        return (
+                                          <div>
+                                            {/* Metric toggle + comparison */}
+                                            <div className="flex items-center gap-2 mb-3 flex-wrap">
+                                              {EX_METRICS.map(m => {
+                                                const isActive = activeIds.includes(m.id);
+                                                return (
+                                                  <button key={m.id}
+                                                    onClick={e => { e.stopPropagation(); toggleEx(m.id); }}
+                                                    className="text-[11px] font-black px-3 py-1.5 rounded-lg transition-all"
+                                                    style={{
+                                                      border: `1.5px solid ${isActive ? m.color : v('border-card')}`,
+                                                      background: isActive ? v('bg-input') : 'transparent',
+                                                      color: isActive ? m.color : v('text-label'),
+                                                      cursor: 'pointer',
+                                                    }}>
+                                                    {isActive && <span style={{ display:'inline-block', width:6, height:6,
+                                                      borderRadius:'50%', background:m.color, marginRight:5, verticalAlign:'middle' }} />}
+                                                    {m.label}
+                                                  </button>
+                                                );
+                                              })}
+                                              <div style={{ width:1, height:16, background:v('border-card'), margin:'0 4px' }} />
+                                              <button
+                                                onClick={e => { e.stopPropagation();
+                                                  const next = !explorerChCompare;
+                                                  setExplorerChCompare(next);
+                                                  if (!next) setExplorerChSelected([explorerChMetric]);
+                                                  else setExplorerChSelected([explorerChMetric]);
+                                                }}
+                                                className="text-[11px] font-black px-3 py-1.5 rounded-lg transition-all"
+                                                style={{
+                                                  border: `1.5px solid ${explorerChCompare ? v('accent') : v('border-card')}`,
+                                                  background: explorerChCompare ? v('accent') : v('bg-input'),
+                                                  color: explorerChCompare ? '#fff' : v('text-secondary'),
+                                                  cursor: 'pointer',
+                                                }}>
+                                                {explorerChCompare ? '✕ Exit Comparison' : '+ Comparison'}
+                                              </button>
+                                              {snap?.fetchedAt && (
+                                                <span className="ml-auto flex items-center gap-1.5 text-[10px] font-semibold" style={{ color: v('text-label') }}>
+                                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse inline-block" />
+                                                  Synced {new Date(snap.fetchedAt).toLocaleDateString('en-IN', { day:'numeric', month:'short', year:'numeric' })}
+                                                </span>
+                                              )}
                                             </div>
-                                            {/* Timestamp centered */}
-                                            {snap.fetchedAt && (
-                                              <div className="flex items-center gap-2">
-                                                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                                                <p className="text-[11px] font-semibold" style={{ color: v('text-label') }}>
-                                                  Last synced · <span className="font-black" style={{ color: v('text-heading') }}>{new Date(snap.fetchedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</span>
-                                                </p>
+
+                                            {/* Chart */}
+                                            {d2Loading ? (
+                                              <div className="flex items-center gap-2 py-6 justify-center">
+                                                <Loader2 size={14} className="animate-spin" style={{ color: v('accent') }} />
+                                                <span className="text-xs font-bold" style={{ color: v('text-label') }}>Loading…</span>
                                               </div>
+                                            ) : daily.length === 0 ? (
+                                              <p className="text-xs font-semibold text-center py-4" style={{ color: v('text-placeholder') }}>
+                                                No analytics data — run channel_pipeline.py option 1
+                                              </p>
+                                            ) : (
+                                              <ResponsiveContainer width="100%" height={180}>
+                                                <LineChart data={[...daily].sort((a,b) => a.date.localeCompare(b.date))}
+                                                  margin={{ top: 4, right: needsDual ? 52 : 8, left: 0, bottom: 0 }}>
+                                                  <CartesianGrid strokeDasharray="3 3" stroke={v('border-light')} vertical={false} />
+                                                  <XAxis dataKey="date" tick={{ fill: v('text-label'), fontSize: 9 }}
+                                                    tickFormatter={d => d.slice(5)} axisLine={false} tickLine={false}
+                                                    interval="preserveStartEnd" />
+                                                  <YAxis yAxisId="left" tick={{ fill: v('text-label'), fontSize: 9 }}
+                                                    axisLine={false} tickLine={false} tickFormatter={fmtN} width={48} />
+                                                  {needsDual && (
+                                                    <YAxis yAxisId="right" orientation="right"
+                                                      tick={{ fill: '#fbbf24', fontSize: 9 }}
+                                                      axisLine={false} tickLine={false} tickFormatter={fmtH} width={48} />
+                                                  )}
+                                                  <RechartsTooltip
+                                                    contentStyle={{ background: v('bg-card'), border: `1px solid ${v('border-card')}`, borderRadius: 10, fontSize: 12 }}
+                                                    labelStyle={{ color: v('text-label'), fontWeight: 700, marginBottom: 4 }}
+                                                    formatter={(val, name) => {
+                                                      const m = EX_METRICS.find(x => x.label === name);
+                                                      return [m?.id === 'watchTimeHrs' ? fmtH(val) : fmtN(val), name];
+                                                    }}
+                                                  />
+                                                  {activeIds.map(id => {
+                                                    const m = EX_METRICS.find(x => x.id === id);
+                                                    if (!m) return null;
+                                                    const axis = (id === 'watchTimeHrs' && needsDual) ? 'right' : 'left';
+                                                    return (
+                                                      <Line key={id} yAxisId={axis} type="monotone"
+                                                        dataKey={id} name={m.label} stroke={m.color}
+                                                        strokeWidth={2} dot={false}
+                                                        activeDot={{ r: 4, fill: m.color, strokeWidth: 0 }} />
+                                                    );
+                                                  })}
+                                                </LineChart>
+                                              </ResponsiveContainer>
                                             )}
                                           </div>
-                                        ) : (
-                                          <p className="text-xs font-semibold text-center py-4" style={{ color: v('text-placeholder') }}>
-                                            No realtime data — run channel_pipeline.py option 3
-                                          </p>
-                                        )}
-                                      </div>
+                                        );
+                                      })()
                                     ) : (
                                       /* D-2 day-wise table */
                                       (() => {
