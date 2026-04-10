@@ -9,7 +9,7 @@ import {
   Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { Loader2, Users, Eye, PlaySquare, TrendingUp, ChevronDown, ChevronRight } from 'lucide-react';
-import { MOCK_CHANNELS, MOCK_CHANNEL_ANALYTICS, MOCK_CHANNEL_ANALYTICS_SINGLE } from './mockData';
+import { MOCK_CHANNELS, MOCK_ANALYTICS_MAP, MOCK_CHANNEL_ANALYTICS_SINGLE } from './mockData';
 
 const API = import.meta.env.VITE_API_URL || '';
 const v   = (n) => `var(--${n})`;
@@ -165,9 +165,9 @@ const RANGES = [
 ];
 
 export default function CompanyDashboard() {
-  const [channels, setChannels]             = useState([]);
-  const [analytics, setAnalytics]           = useState({});
-  const [loadingCh, setLoadingCh]           = useState(true);
+  const [channels, setChannels]             = useState(MOCK_CHANNELS);
+  const [analytics, setAnalytics]           = useState(MOCK_ANALYTICS_MAP);
+  const [loadingCh, setLoadingCh]           = useState(false);
   const [loadingAn, setLoadingAn]           = useState(false);
   const [dateRange, setDateRange]           = useState('30d');
   const [expandedCat, setExpandedCat]       = useState(null);

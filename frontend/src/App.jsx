@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import CompanyDashboard from './CompanyDashboard';
-import { MOCK_CHANNELS, MOCK_BQ_VIDEOS, MOCK_FACULTY, MOCK_CHANNEL_ANALYTICS, MOCK_CHANNEL_ANALYTICS_SINGLE } from './mockData';
+import { MOCK_CHANNELS, MOCK_BQ_VIDEOS, MOCK_FACULTY, MOCK_CHANNEL_ANALYTICS_SINGLE } from './mockData';
 import {
   Loader2, Sun, Moon,
   TrendingUp as UpArrow, TrendingDown as DownArrow,
@@ -203,9 +203,8 @@ function App() {
 
   // Channel tab — BQ data
   const [channelSearch, setChannelSearch] = useState('');
-  const [bqChannels, setBqChannels] = useState([]);
-  const [bqLoading, setBqLoading] = useState(false);
-  const [visibleExtraCols, setVisibleExtraCols] = useState([]);
+  const [bqChannels, setBqChannels] = useState(MOCK_CHANNELS);
+  const [bqLoading, setBqLoading] = useState(false);  const [visibleExtraCols, setVisibleExtraCols] = useState([]);
   const [showColPicker, setShowColPicker] = useState(false);
   const toggleExtraCol = (id) => setVisibleExtraCols(prev => prev.includes(id) ? prev.filter(c => c !== id) : [...prev, id]);
   const [explorerSortCol, setExplorerSortCol] = useState('subscribers');
@@ -266,9 +265,8 @@ function App() {
   }, [mainTab]);
 
   // Faculty state
-  const [faculty, setFaculty] = useState([]);
-  const [facultyLoading, setFacultyLoading] = useState(false);
-  const [facultySearch, setFacultySearch] = useState('');
+  const [faculty, setFaculty] = useState(MOCK_FACULTY);
+  const [facultyLoading, setFacultyLoading] = useState(false);  const [facultySearch, setFacultySearch] = useState('');
   const [facultySortBy, setFacultySortBy] = useState('totalViews');
   const [facultySortDir, setFacultySortDir] = useState('desc');
   const [expandedTeacher, setExpandedTeacher] = useState(null);
