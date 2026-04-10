@@ -11,7 +11,7 @@ from google.cloud import bigquery
 
 BQ_PROJECT    = "adda247-dev"
 BQ_DATASET    = "yt_central_mind"
-TABLE_CHANNEL = f"{BQ_PROJECT}.{BQ_DATASET}.channel_daily_snapshot"
+TABLE_CHANNEL = f"{BQ_PROJECT}.{BQ_DATASET}.channel_nearrealtime_snapshot"
 TABLE_VIDEO   = f"{BQ_PROJECT}.{BQ_DATASET}.video_analytics_daily_v2"
 SA_PATH       = Path(__file__).parent / "servcie_account_adda247-dev.json"
 
@@ -44,7 +44,7 @@ def get_cached(key, ttl_seconds, fetch_fn):
     _cache[key] = {"data": data, "time": now}
     return data
 
-CACHE_TTL_CHANNEL   = 3600  # 1 hour — matches hourly cron on channel_daily_snapshot
+CACHE_TTL_CHANNEL   = 900   # 15 min — matches channel_nearrealtime_snapshot refresh cadence
 CACHE_TTL_BQ_VIDEOS = 7200  # 2 hours — nightly pipeline, no need to refresh more often
 
 
@@ -72,7 +72,7 @@ def get_channel_profile(channel_id: str):
 
         snip = response["items"][0]["snippet"]
 
-        # ── Stats: from BQ channel_daily_snapshot (latest row for this channel) ──
+        # ── Stats: from BQ channel_nearrealtime_snapshot (latest row for this channel) ──
         bq_stats = {"subscribers_actual": 0, "subscribers_rounded": 0, "total_views": 0, "total_videos": 0}
         try:
             bq = get_bq_client()
@@ -125,7 +125,7 @@ def get_channel_profile(channel_id: str):
 @youtube_router.get("/channel-stats")
 def get_channel_stats():
     """
-    Returns latest snapshot for every channel from BQ channel_daily_snapshot.
+    Returns latest snapshot for every channel from BQ channel_nearrealtime_snapshot.
     Frontend uses this to populate the Channel Explorer tab and Business Dashboard.
     """
     try:
