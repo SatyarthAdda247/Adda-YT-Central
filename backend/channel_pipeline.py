@@ -329,35 +329,61 @@ def run_realtime_parallel(channels):
 
 # ── Menu ──────────────────────────────────────────────────────────────────────
 
+def get_last_fetched_date():
+    """Returns the MAX(date) across all channels in channel_analytics_daily."""
+    try:
+        bq = get_bq_client()
+        rows = list(bq.query(f"SELECT MAX(date) as last_date FROM `{TABLE_DAILY}`").result())
+        if rows and rows[0].last_date:
+            return rows[0].last_date  # returns datetime.date
+    except Exception as e:
+        log(f"Could not query last date: {e}")
+    return None
+
+
 def main():
     print("\n╔══════════════════════════════════════════╗")
     print("║   Channel Pipeline — YT Central Mind     ║")
     print("╠══════════════════════════════════════════╣")
     print("║  1. Full Backfill D-2  (Jan 7 2026 → today-2) ║")
-    print("║  2. Daily D-2          (yesterday-2 only) ║")
-    print("║  3. Realtime Snapshot  (run now)          ║")
+    print("║  2. Daily D-2          (yesterday-2 only)      ║")
+    print("║  3. Realtime Snapshot  (run now)               ║")
+    print("║  4. Smart Catchup      (last BQ date → today-2)║")
     print("╚══════════════════════════════════════════╝")
     choice = input("\nEnter option: ").strip()
 
     channels = load_channels()
     log(f"Loaded {len(channels)} channels from CSV")
 
-    today   = datetime.now(timezone.utc).date()
-    d2      = today - timedelta(days=2)   # D-2
+    today = datetime.now(timezone.utc).date()
+    d2    = today - timedelta(days=2)
 
     if choice == "1":
-        # Backfill: Jan 7 2025 → D-2
         start = "2026-01-07"
         end   = d2.strftime("%Y-%m-%d")
         run_daily_parallel(channels, start, end)
 
     elif choice == "2":
-        # Daily: just D-2 date
         day = d2.strftime("%Y-%m-%d")
         run_daily_parallel(channels, day, day)
 
     elif choice == "3":
         run_realtime_parallel(channels)
+
+    elif choice == "4":
+        last = get_last_fetched_date()
+        if not last:
+            log("No existing data found — run Full Backfill (option 1) first.")
+            return
+        from datetime import date as date_type
+        next_day = last + timedelta(days=1)
+        if next_day > d2:
+            log(f"Already up to date — last date in BQ: {last}, D-2: {d2}. Nothing to fetch.")
+            return
+        start = next_day.strftime("%Y-%m-%d")
+        end   = d2.strftime("%Y-%m-%d")
+        log(f"Smart Catchup: {start} → {end} ({(d2 - next_day).days + 1} days missing)")
+        run_daily_parallel(channels, start, end)
 
     else:
         print("Invalid option.")
